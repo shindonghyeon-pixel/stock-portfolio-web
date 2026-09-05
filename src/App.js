@@ -127,7 +127,7 @@ export default function App() {
   const [trendEndDate, setTrendEndDate] = useState(getTodayString());
   const [appliedTrendStartDate, setAppliedTrendStartDate] = useState(getYearFirstDayString());
   const [appliedTrendEndDate, setAppliedTrendEndDate] = useState(getTodayString());
-  const [trendProfitRateInput, setTrendProfitRateInput] = useState(0);
+  const [trendProfitRateInput, setTrendProfitRateInput] = useState(0.08); // 기본값 0.08
   const [trendRows, setTrendRows] = useState([]);
   const [selectedTrendIds, setSelectedTrendIds] = useState([]);
   const [deletedTrendIds, setDeletedTrendIds] = useState([]);
@@ -458,29 +458,98 @@ export default function App() {
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
 
-    let targetDates = [];
-    let curr = new Date(start);
+    // 포트폴리오 데이터에서 존재하는 모든 기준일자 집합 추출 (날짜 오름차순 정렬)
+    const availablePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean))).sort();
 
-    while (curr <= end) {
-      const y = curr.getFullYear();
-      const m = curr.getMonth();
-      const d = curr.getDate();
+    // 월별로 그룹화하여 데이터가 존재하는 날짜들을 관리
+    const monthlyDataMap = new Map(); // "YYYY-MM" -> [dateStr1, dateStr2, ...]
+    availablePortfolioDates.forEach(dt => {
+      const ym = dt.substring(0, 7);
+      if (!monthlyDataMap.has(ym)) {
+        monthlyDataMap.set(ym, []);
+      }
+      monthlyDataMap.get(ym).push(dt);
+    });
 
+    const targetDatesSet = new Set();
+
+    // 시작일부터 종료일까지의 월들을 순회하며 조건에 맞는 날짜 추출
+    let currIter = new Date(start.getFullYear(), start.getMonth(), 1);
+    const endIter = new Date(end.getFullYear(), end.getMonth(), 1);
+
+    while (currIter <= endIter) {
+      const y = currIter.getFullYear();
+      const m = currIter.getMonth();
+      const ym = `${y}-${String(m + 1).padStart(2, '0')}`;
       const isCurrentMonth = (y === currentYear && m === currentMonth);
 
-      if (isCurrentMonth) {
-        // 당월인 경우는 매일 또는 해당 기간 내 일자별로 포함
-        const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        targetDates.push(dateStr);
+      const datesInMonth = monthlyDataMap.get(ym) || [];
+
+      if (!isCurrentMonth) {
+        // 3. 당월이 아닌 경우: 해당 월의 가장 빠른 일자의 데이터를 보여줌
+        if (datesInMonth.length > 0) {
+          // 해당 월에 속하고 [시작일, 종료일] 범위 내에 포함되는 가장 빠른 날짜 또는 월의 첫 데이터
+          const validDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
+          if (validDates.length > 0) {
+            targetDatesSet.add(validDates[0]);
+          }
+        }
       } else {
-        // 당월이 아닌 경우는 매달 첫째 날만 포함
-        if (d === 1) {
-          const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-          targetDates.push(dateStr);
+        // 4. 당월인 경우: 
+        // - 당월의 첫 번째 데이터가 있는 일자
+        // - 그 이후는 오늘 이전일자는 매주 월요일 데이터만
+        // - 마지막에 오늘 날짜
+        const monthDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
+        if (monthDates.length > 0) {
+          // 첫 번째 데이터
+          targetDatesSet.add(monthDates[0]);
+
+          // 그 이후 날짜 중 오늘 이전일자이면서 월요일(getDay() === 1)인 날짜들
+          monthDates.forEach(dt => {
+            const dtObj = new Date(dt);
+            const todayStr = getTodayString();
+            if (dt > monthDates[0] && dt < todayStr && dtObj.getDay() === 1) {
+              targetDatesSet.add(dt);
+            }
+          });
+        }
+        // 마지막에 오늘 날짜 포함 (종료일이 오늘이거나 포함될 때)
+        const todayStr = getTodayString();
+        if (todayStr >= appliedTrendStartDate && todayStr <= appliedTrendEndDate) {
+          targetDatesSet.add(todayStr);
         }
       }
-      curr.setDate(curr.getDate() + 1);
+
+      currIter.setMonth(currIter.getMonth() + 1);
     }
+
+    // 만약 portfolio에 직접 계산된 날짜가 없거나 기간 내 일자가 직접 선택되지 않은 경우를 대비해 
+    // 사용자가 조회 기간 내 지정한 규칙대로 일자 배열 생성 후 필터링
+    if (targetDatesSet.size === 0) {
+      // 기본적으로 시작일부터 종료일까지 조건에 맞는 날짜들 추가
+      let c = new Date(start);
+      while (c <= end) {
+        const y = c.getFullYear();
+        const m = c.getMonth();
+        const d = c.getDate();
+        const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const isCurrentMonth = (y === currentYear && m === currentMonth);
+
+        if (!isCurrentMonth) {
+          // 당월이 아닌 경우 각 월의 1일 또는 해당월 첫 날짜
+          if (d === 1) targetDatesSet.add(dateStr);
+        } else {
+          // 당월인 경우 첫날, 월요일, 오늘
+          const todayStr = getTodayString();
+          if (c.getDay() === 1 || dateStr === todayStr || d === 1) {
+            targetDatesSet.add(dateStr);
+          }
+        }
+        c.setDate(c.getDate() + 1);
+      }
+    }
+
+    const finalDates = Array.from(targetDatesSet).sort();
 
     // 포트폴리오 데이터에서 날짜별 현재금액 총액 가져오기 함수
     const getPortfolioTotalForDate = (dateStr) => {
@@ -493,7 +562,7 @@ export default function App() {
       }, 0);
     };
 
-    const newRows = targetDates.map((dt, idx) => {
+    const newRows = finalDates.map((dt, idx) => {
       const amount = getPortfolioTotalForDate(dt);
       return {
         id: 'trend_' + Date.now() + '_' + idx,
@@ -673,7 +742,6 @@ export default function App() {
           }));
           setStocks(prev => [...excelRows, ...prev]);
         } else if (activeUploadType === 'trend') {
-          // 엑셀 포맷: 일자 / 금액
           const uploadedRows = dataRows.map((row, index) => {
             const dt = parseExcelDate(row[headers.indexOf('일자')]);
             const amt = parseFloat(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9.]/g, '')) || 0;
@@ -684,7 +752,6 @@ export default function App() {
             };
           });
 
-          // 동일 일자에 금액이 다시 들어오면 최신 데이터로 변경 (병합/덮어쓰기)
           setTrendRows(prev => {
             const map = new Map();
             prev.forEach(r => map.set(r.date, r));
@@ -971,12 +1038,29 @@ export default function App() {
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
-  // 총액 Trend 관련 요약 및 계산
+  // 총액 Trend 관련 요약 및 계산 (요청사항 2 반영: 기존 납입총액 + 시작일자보다 적은 날짜 중에 가장 가까운 일자의 납입 누적액)
   const trendTotalPayment = useMemo(() => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
-    return payments
+    
+    // 1. 기간 내 납입 총액
+    const inRangeSum = payments
       .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+    // 2. 시작일자보다 적은 날짜 중에 가장 가까운 일자의 납입 누적액(또는 해당일까지의 총합)
+    const priorPayments = payments.filter(p => p.date && p.date < appliedTrendStartDate);
+    let priorSum = 0;
+    if (priorPayments.length > 0) {
+      // 날짜 기준 내림차순 정렬하여 가장 가까운(최신) 과거 일자 찾기
+      priorPayments.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const nearestDate = priorPayments[0].date;
+      // 해당 날짜 이하(또는 해당 날짜)의 모든 누적 납입액
+      priorSum = payments
+        .filter(p => p.date && p.date <= nearestDate)
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    }
+
+    return inRangeSum + priorSum;
   }, [payments, appliedTrendStartDate, appliedTrendEndDate]);
 
   const trendTargetAmount = useMemo(() => {
@@ -984,7 +1068,6 @@ export default function App() {
     return trendTotalPayment * (1 + rate);
   }, [trendTotalPayment, trendProfitRateInput]);
 
-  // 정렬된 trendRows (오름차순 또는 내림차순 정렬하여 가장 마지막 입력된 일자 기준 계산)
   const sortedTrendRows = useMemo(() => {
     return [...trendRows].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   }, [trendRows]);
@@ -1315,7 +1398,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
                   <span className="text-xs text-slate-500 font-medium">이익율</span>
-                  <input type="number" step="any" value={trendProfitRateInput} onChange={e => setTrendProfitRateInput(parseFloat(e.target.value) || 0)} className="w-20 text-sm outline-none bg-transparent font-medium text-right" placeholder="0" />
+                  <input type="number" step="any" value={trendProfitRateInput} onChange={e => setTrendProfitRateInput(parseFloat(e.target.value) || 0)} className="w-20 text-sm outline-none bg-transparent font-medium text-right" placeholder="0.08" />
                 </div>
                 <button onClick={() => { setAppliedTrendStartDate(trendStartDate); setAppliedTrendEndDate(trendEndDate); handleCalculateTrend(); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
                 <button onClick={handleAddTrendRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
@@ -1343,17 +1426,11 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {trendRows.length > 0 ? trendRows.map((row, index) => {
-                    // 현재일 기준으로 가장 마지막 입력된 일자의 금액 찾기 (sortedTrendRows 기준 가장 마지막 항목의 금액)
                     const lastRow = sortedTrendRows.length > 0 ? sortedTrendRows[sortedTrendRows.length - 1] : null;
                     const baseAmountForRatio = lastRow ? Number(lastRow.amount || 0) : 0;
 
-                    // 비율: (금액 - 현재일 기준으로 가장 마지막 입력된 일자의 금액) / 현재일 기준으로 가장 마지막 입력된 일자의 금액
                     const ratio = baseAmountForRatio !== 0 ? (Number(row.amount || 0) - baseAmountForRatio) / baseAmountForRatio : 0;
-
-                    // 이익율: (금액 - 납입총액) / 납입총액
                     const profitRate = trendTotalPayment !== 0 ? (Number(row.amount || 0) - trendTotalPayment) / trendTotalPayment : 0;
-
-                    // 이익금액: 금액 - 납입총액
                     const profitAmount = Number(row.amount || 0) - trendTotalPayment;
 
                     return (
