@@ -14,7 +14,9 @@ import {
   Save,
   Layers,
   ArrowLeftRight,
-  Calculator
+  Calculator,
+  LineChart,
+  X
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -149,6 +151,7 @@ export default function App() {
   const [trendRows, setTrendRows] = useState([]);
   const [selectedTrendIds, setSelectedTrendIds] = useState([]);
   const [deletedTrendIds, setDeletedTrendIds] = useState([]);
+  const [isTrendChartOpen, setIsTrendChartOpen] = useState(false);
 
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
@@ -157,6 +160,7 @@ export default function App() {
   const stockFileInputRef = useRef(null);
   const transactionFileInputRef = useRef(null);
   const trendFileInputRef = useRef(null);
+  const chartCanvasRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
@@ -177,6 +181,102 @@ export default function App() {
     fetchTrends();
     fetchExchangeRate();
   }, []);
+
+  // 꺾은선 그래프 그리기 효과
+  useEffect(() => {
+    if (!isTrendChartOpen) return;
+    const canvas = chartCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // 데이터 준비 (오름차순 정렬: 과거 -> 최신)
+    const chartData = [...sortedTrendRows].reverse();
+    
+    // 캔버스 크기 설정
+    const width = canvas.parentElement.clientWidth || 700;
+    const height = 350;
+    canvas.width = width * window.devicePixelRatio;
+    canvas.height = height * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (chartData.length === 0) {
+      ctx.fillStyle = '#64748b';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('표시할 데이터가 없습니다.', width / 2, height / 2);
+      return;
+    }
+
+    const padding = 60;
+    const graphWidth = width - padding * 2;
+    const graphHeight = height - padding * 2;
+
+    const amounts = chartData.map(d => Number(d.amount || 0));
+    const minAmt = Math.min(...amounts, 0);
+    const maxAmt = Math.max(...amounts, 100);
+    const amtRange = maxAmt - minAmt || 1;
+
+    // 그리드 및 축 라인 그리기
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+
+    const ySteps = 5;
+    for (let i = 0; i <= ySteps; i++) {
+      const yVal = minAmt + (amtRange * i) / ySteps;
+      const yPos = height - padding - (graphHeight * i) / ySteps;
+
+      ctx.beginPath();
+      ctx.moveTo(padding, yPos);
+      ctx.lineTo(width - padding, yPos);
+      ctx.stroke();
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(formatCurrency(yVal), padding - 10, yPos + 4);
+    }
+
+    // 포인트 좌표 계산
+    const points = chartData.map((d, index) => {
+      const x = chartData.length === 1 ? width / 2 : padding + (graphWidth * index) / (chartData.length - 1);
+      const y = height - padding - (graphHeight * (Number(d.amount || 0) - minAmt)) / amtRange;
+      return { x, y, date: d.date, amount: Number(d.amount || 0) };
+    });
+
+    // 꺾은선 그리기
+    ctx.strokeStyle = '#4f46e5';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    points.forEach((p, idx) => {
+      if (idx === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+
+    // 데이터 포인트 및 X축 라벨 그리기
+    points.forEach((p, idx) => {
+      // 포인트 원
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#4f46e5';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // X축 날짜 라벨 (너무 많으면 간격 조절 또는 전체 표시)
+      if (chartData.length <= 10 || idx % Math.ceil(chartData.length / 10) === 0 || idx === chartData.length - 1) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.date, p.x, height - padding + 20);
+      }
+    });
+
+  }, [isTrendChartOpen, sortedTrendRows]);
 
   const fetchExchangeRate = async () => {
     try {
@@ -473,15 +573,6 @@ export default function App() {
 
     setSuccessMessage('총액 Trend 조회가 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
-  };
-
-  const handleAddTrendRow = () => {
-    setTrendRows(prev => [{
-      id: 'temp_trend_' + Date.now(),
-      date: getTodayString(),
-      amount: 0,
-      isTemp: true
-    }, ...prev]);
   };
 
   const handleAddPortfolioRow = () => {
@@ -1011,6 +1102,40 @@ export default function App() {
         </div>
       )}
 
+      {/* 총액 Trend 꺾은선 그래프 모달 */}
+      {isTrendChartOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 flex flex-col">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+              <div className="flex items-center gap-2 text-indigo-600">
+                <LineChart size={24} />
+                <h3 className="text-lg font-bold text-slate-900">총액 Trend 꺾은선 그래프</h3>
+              </div>
+              <button 
+                onClick={() => setIsTrendChartOpen(false)} 
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="py-2 text-xs text-slate-500">
+              조회 기간: <span className="font-semibold text-slate-700">{appliedTrendStartDate} ~ {appliedTrendEndDate}</span> (데이터 총 {sortedTrendRows.length}건)
+            </div>
+            <div className="py-4 w-full flex justify-center bg-slate-50 rounded-xl border border-slate-100 my-2">
+              <canvas ref={chartCanvasRef} className="w-full h-[350px]" style={{ width: '100%', height: '350px' }} />
+            </div>
+            <div className="flex justify-end pt-2">
+              <button 
+                onClick={() => setIsTrendChartOpen(false)} 
+                className="px-5 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {successMessage && <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg font-medium">{successMessage}</div>}
 
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
@@ -1318,8 +1443,8 @@ export default function App() {
                   <input type="number" step="any" value={trendProfitRateInput} onChange={e => setTrendProfitRateInput(parseFloat(e.target.value) || 0)} className="w-20 text-sm outline-none bg-transparent font-medium text-right" placeholder="0.08" />
                 </div>
                 <button onClick={() => { setAppliedTrendStartDate(trendStartDate); setAppliedTrendEndDate(trendEndDate); handleCalculateTrend(); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
-                <button onClick={handleAddTrendRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteTrendRows} disabled={selectedTrendIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTrendIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+                <button onClick={() => setIsTrendChartOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700"><LineChart size={16} />그래프</button>
                 <button onClick={() => triggerExcelUpload('trend')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
@@ -1342,7 +1467,6 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
-                    // 요청하신 변경된 비율 계산 로직: (현재 행의 금액 - 다음 행(더 과거 행)의 금액) / 다음 행의 금액
                     const nextRow = sortedTrendRows[index + 1];
                     const nextAmount = nextRow ? Number(nextRow.amount || 0) : 0;
                     const ratio = nextRow && nextAmount !== 0 ? (Number(row.amount || 0) - nextAmount) / nextAmount : 0;
