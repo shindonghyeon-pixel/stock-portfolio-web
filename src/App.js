@@ -113,7 +113,7 @@ export default function App() {
   const [appliedPfBaseDate, setAppliedPfBaseDate] = useState(getTodayString());
   const [appliedPfBankFilter, setAppliedPfBankFilter] = useState('');
   const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
-  const [exchangeRate, setExchangeRate] = useState(1350); // 기본 환율
+  const [exchangeRate, setExchangeRate] = useState(1350);
 
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
@@ -250,7 +250,6 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. 구글시트 단가현황 API 호출
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbzsinoBtvlVMUQC69g2Aa6EmRM747h8ffB5_r1zM5hf1FReRQbLgJy-jHMgn6J7xFfC/exec';
@@ -361,7 +360,12 @@ export default function App() {
       const purchaseAmount = qty * avgPrice;
       const currentAmount = qty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
-      const sellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0;
+      
+      const todaySellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0;
+      const prevPfItem = portfolios.find(p => !p.isManual && p.baseDate === prevDateStr && p.bank === bank && p.purpose === purpose && p.code === code);
+      const prevSellProfitLoss = prevPfItem ? Number(prevPfItem.sellProfitLoss || 0) : 0;
+      const sellProfitLoss = prevSellProfitLoss + todaySellProfitLoss;
+
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
       newPfList.push({
@@ -386,10 +390,9 @@ export default function App() {
 
     const existingManualItems = portfolios.filter(p => p.isManual);
     existingManualItems.forEach(manual => {
-      const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === manual.bank && p.purpose === manual.purpose && p.name === manual.name);
-      const prevCurrentAmount = prevManual ? Number(prevManual.currentAmount || 0) : Number(manual.currentAmount || 0);
       const currentAmount = Number(manual.currentAmount || 0);
-      const evalProfitLoss = prevCurrentAmount - currentAmount;
+      const purchaseAmount = Number(manual.purchaseAmount || 0);
+      const evalProfitLoss = currentAmount - purchaseAmount;
 
       newPfList.push({
         ...manual,
@@ -742,15 +745,10 @@ export default function App() {
           if (field === 'bank' || field === 'purpose') {
             updated.name = '';
           }
-          if (field === 'currentAmount') {
-            const newAmount = Number(val || 0);
-            updated.currentAmount = newAmount;
-            const d = new Date(updated.baseDate || pfBaseDate);
-            d.setDate(d.getDate() - 1);
-            const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-            const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === updated.bank && p.purpose === updated.purpose && p.name === updated.name);
-            const prevAmount = prevManual ? Number(prevManual.currentAmount || 0) : newAmount;
-            updated.evalProfitLoss = prevAmount - newAmount;
+          if (field === 'currentAmount' || field === 'purchaseAmount') {
+            const curAmt = field === 'currentAmount' ? Number(val || 0) : Number(pf.currentAmount || 0);
+            const purAmt = field === 'purchaseAmount' ? Number(val || 0) : Number(pf.purchaseAmount || 0);
+            updated.evalProfitLoss = curAmt - purAmt;
           }
         } else {
           if (field === 'currentPrice') {
@@ -1057,7 +1055,15 @@ export default function App() {
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
-                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-2 px-4 text-right">
+                            <input 
+                              type="text" 
+                              value={pf.purchaseAmount === 0 || pf.purchaseAmount === '' ? '' : formatCurrency(pf.purchaseAmount, pf.currency)}
+                              onChange={e => handlePortfolioRowChange(pf.id, 'purchaseAmount', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+                              placeholder="0"
+                              className="w-full px-2 py-1 border border-teal-300 rounded text-sm text-right font-medium bg-teal-50/30 text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                            />
+                          </td>
                           <td className="py-2 px-4 text-right">
                             <input 
                               type="text" 
