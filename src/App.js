@@ -700,6 +700,16 @@ export default function App() {
             updated.code = '';
             updated.currency = 'KRW';
           }
+        } else if (field === 'code') {
+          // 종목코드가 변경될 경우 동일 은행, 동일 목적, 동일 종목코드인 첫 번째 스톡의 통화 가져오기
+          const matchedStock = stocks.find(s => 
+            (s.bank || '').trim() === (updated.bank || '').trim() &&
+            (s.purpose || '').trim() === (updated.purpose || '').trim() &&
+            (s.code || '').trim() === (value || '').trim()
+          );
+          if (matchedStock) {
+            updated.currency = matchedStock.currency || 'KRW';
+          }
         }
         return updated;
       }
@@ -731,12 +741,35 @@ export default function App() {
   }, [payments, appliedSearchYear]);
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(tx => {
+    let list = transactions.filter(tx => {
       if (!tx.date) return true;
       if (appliedTxStartDate && tx.date < appliedTxStartDate) return false;
       if (appliedTxEndDate && tx.date > appliedTxEndDate) return false;
       return true;
     });
+
+    list.sort((a, b) => {
+      const dateA = (a.date || '').trim();
+      const dateB = (b.date || '').trim();
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA); // 거래일자 최신순
+      }
+      const bankA = (a.bank || '').trim();
+      const bankB = (b.bank || '').trim();
+      if (bankA !== bankB) {
+        return bankA.localeCompare(bankB, 'ko');
+      }
+      const purposeA = (a.purpose || '').trim();
+      const purposeB = (b.purpose || '').trim();
+      if (purposeA !== purposeB) {
+        return purposeA.localeCompare(purposeB, 'ko');
+      }
+      const codeA = (a.code || '').trim();
+      const codeB = (b.code || '').trim();
+      return codeA.localeCompare(codeB, 'ko');
+    });
+
+    return list;
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
 
   const handleSelectAll = (e) => {
@@ -1481,7 +1514,7 @@ export default function App() {
                               value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)}
                               onChange={(e) => {
                                 const raw = e.target.value.replace(/[^0-9.]/g, '');
-                                handleTransactionRowChange(tx.id, 'price', raw === '' ? 0 : parseFloat(raw));
+                                handleTransactionRowCodeChangeOrPrice(tx.id, 'price', raw === '' ? 0 : parseFloat(raw));
                               }}
                               placeholder="0"
                               className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900 font-medium"
@@ -1538,4 +1571,9 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+// 헬퍼 함수 정의
+function handleTransactionRowCodeChangeOrPrice(id, field, value, setTransactions) {
+  // 컴포넌트 내부에서 함수 정의 사용
 }
