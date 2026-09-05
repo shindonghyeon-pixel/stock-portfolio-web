@@ -370,10 +370,9 @@ export default function App() {
       });
     }
 
-    // 기존에 존재하던 수동 추가 항목들 처리 (전일자 현재금액 연동 및 평가손익 계산)
+    // 기존 수동 추가 항목들 처리 (전일자 현재금액 연동 및 평가손익 계산)
     const existingManualItems = portfolios.filter(p => p.isManual);
     existingManualItems.forEach(manual => {
-      // 전일자(prevDateStr)에 동일한 수동 항목이 있는지 확인하여 전일자 현재금액 탐색
       const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === manual.bank && p.purpose === manual.purpose && p.name === manual.name);
       const prevCurrentAmount = prevManual ? Number(prevManual.currentAmount || 0) : Number(manual.currentAmount || 0);
       const currentAmount = Number(manual.currentAmount || 0);
@@ -727,10 +726,13 @@ export default function App() {
       if (pf.id === id) {
         const updated = { ...pf, [field]: val };
         if (pf.isManual) {
+          if (field === 'bank' || field === 'purpose') {
+            // 은행이나 목적이 바뀌면 기존 선택된 종목명이 유효한지 확인하고 초기화할 수 있음
+            updated.name = '';
+          }
           if (field === 'currentAmount') {
             const newAmount = Number(val || 0);
             updated.currentAmount = newAmount;
-            // 수동 항목 평가손익: 전일자 현재금액 - 오늘자 현재금액 (임시로 입력값 반영 전 기준 계산을 위해 실시간 연동)
             const d = new Date(updated.baseDate || pfBaseDate);
             d.setDate(d.getDate() - 1);
             const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1014,12 +1016,29 @@ export default function App() {
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
                     if (pf.isManual) {
+                      // 종목 관리(stocks)에서 현재 선택된 은행과 목적이 같고, 종목 코드가 없는 항목들의 종목명 추출
+                      const availableManualNames = Array.from(new Set(
+                        stocks
+                          .filter(s => (s.bank || '').trim() === (pf.bank || '').trim() && (s.purpose || '').trim() === (pf.purpose || '').trim() && !s.code?.trim())
+                          .map(s => s.name?.trim())
+                          .filter(Boolean)
+                      ));
+
                       return (
                         <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
                           <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
-                          <td className="py-2 px-4"><select value={pf.bank || ''} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, bank: e.target.value } : p))} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="">선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
-                          <td className="py-2 px-4"><select value={pf.purpose || '연금'} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, purpose: e.target.value } : p))} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
-                          <td className="py-2 px-4"><input type="text" value={pf.name || ''} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, name: e.target.value } : p))} placeholder="종목명 입력" className="w-full px-2 py-1 border rounded text-sm bg-white" /></td>
+                          <td className="py-2 px-4"><select value={pf.bank || ''} onChange={e => handlePortfolioRowChange(pf.id, 'bank', e.target.value)} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="">선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
+                          <td className="py-2 px-4"><select value={pf.purpose || '연금'} onChange={e => handlePortfolioRowChange(pf.id, 'purpose', e.target.value)} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                          <td className="py-2 px-4">
+                            <select 
+                              value={pf.name || ''} 
+                              onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, name: e.target.value } : p))} 
+                              className="w-full px-2 py-1 border rounded text-sm bg-white"
+                            >
+                              <option value="">종목명 선택</option>
+                              {availableManualNames.map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </td>
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
                           <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
