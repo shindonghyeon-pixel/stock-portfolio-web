@@ -191,7 +191,7 @@ export default function App() {
       return true;
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(b.bank || '', 'ko');
       if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
@@ -301,28 +301,43 @@ export default function App() {
     const rawMinAmt = Math.min(...amounts);
     const rawMaxAmt = Math.max(...amounts);
 
-    // Y축 범위 계산: 최소값*0.75 ~ 최대값*1.25 (데이터가 모두 0이거나 같을 경우 대비 안전장치 포함)
-    const minAmt = rawMinAmt === 0 && rawMaxAmt === 0 ? 0 : rawMinAmt * 0.75;
-    const maxAmt = rawMinAmt === 0 && rawMaxAmt === 0 ? 100 : rawMaxAmt * 1.25;
+    // 천만원 단위 (10,000,000)
+    const unit = 10_000_000;
+    // 최소값: 천만원 단위 버림 (Math.floor)
+    let minAmt = Math.floor(rawMinAmt / unit) * unit;
+    // 최대값: 천만원 단위 올림 (Math.ceil)
+    let maxAmt = Math.ceil(rawMaxAmt / unit) * unit;
+
+    // 만약 최소값과 최대값이 같거나 데이터가 0인 경우 여유 공간 부여
+    if (minAmt === maxAmt) {
+      minAmt = minAmt - unit;
+      maxAmt = maxAmt + unit;
+    }
+
     const amtRange = maxAmt - minAmt || 1;
+    // 천만원 단위 구간(스텝) 수 계산
+    const stepCount = Math.round(amtRange / unit);
 
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1;
 
-    const ySteps = 5;
-    for (let i = 0; i <= ySteps; i++) {
-      const yVal = minAmt + (amtRange * i) / ySteps;
-      const yPos = height - padding - (graphHeight * i) / ySteps;
+    // 각 천만원 단위마다 그리드 라인 및 눈금 표시
+    for (let i = 0; i <= stepCount; i++) {
+      const yVal = minAmt + (unit * i);
+      const yPos = height - padding - (graphHeight * (yVal - minAmt)) / amtRange;
 
-      ctx.beginPath();
-      ctx.moveTo(padding, yPos);
-      ctx.lineTo(width - padding, yPos);
-      ctx.stroke();
+      // 캔버스 영역 내에 들어오는 경우에만 라인 및 텍스트 그리기
+      if (yPos >= padding - 10 && yPos <= height - padding + 10) {
+        ctx.beginPath();
+        ctx.moveTo(padding, yPos);
+        ctx.lineTo(width - padding, yPos);
+        ctx.stroke();
 
-      ctx.fillStyle = '#64748b';
-      ctx.font = '11px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(formatCurrency(yVal), padding - 10, yPos + 4);
+        ctx.fillStyle = '#64748b';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(formatCurrency(yVal), padding - 10, yPos + 4);
+      }
     }
 
     const points = chartData.map((d, index) => {
