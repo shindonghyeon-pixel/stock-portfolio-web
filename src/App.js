@@ -76,7 +76,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]);
 
-  // 2. 종목 관리 상태
+  // 2. 종목 관리 상태 ([은행], [목적], [종목코드], [종목명], [종목 유형], [유형 비율], [통화])
   const [stocks, setStocks] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(false);
   const [isSavingStocks, setIsSavingStocks] = useState(false);
@@ -128,10 +128,21 @@ export default function App() {
     try {
       setLoadingStocks(true);
       const querySnapshot = await getDocs(collection(db, "stocks"));
-      const dataList = querySnapshot.docs.map(docSnap => ({
+      let dataList = querySnapshot.docs.map(docSnap => ({
         id: docSnap.id,
         ...docSnap.data()
       }));
+      // 은행별, 종목코드별 오름차순 정렬
+      dataList.sort((a, b) => {
+        const bankA = (a.bank || '').trim();
+        const bankB = (b.bank || '').trim();
+        if (bankA !== bankB) {
+          return bankA.localeCompare(bankB, 'ko');
+        }
+        const codeA = (a.code || '').trim();
+        const codeB = (b.code || '').trim();
+        return codeA.localeCompare(codeB, 'ko');
+      });
       setStocks(dataList);
       setDeletedStockIds([]);
     } catch (error) {
@@ -785,7 +796,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. 종목 관리 탭 */}
+        {/* 2. 종목 관리 탭 ([은행], [목적], [종목코드], [종목명], [종목 유형], [유형 비율], [통화]) */}
         {activeTab === 'stock' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
