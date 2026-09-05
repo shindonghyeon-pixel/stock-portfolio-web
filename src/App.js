@@ -4,86 +4,162 @@ import {
   Upload, 
   Plus, 
   Trash2, 
+  Search, 
   DollarSign, 
   PieChart as PieChartIcon, 
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { db } from './firebase';
+import { 
+  collection, 
+  getDocs, 
+  addDoc, 
+  deleteDoc, 
+  doc, 
+  serverTimestamp 
+} from 'firebase/firestore';
 
 export default function App() {
-  // 1. 브라우저 로컬 스토리지에서 데이터를 불러와 초기값으로 설정 (새로고침해도 유지됨)
-  const [payments, setPayments] = useState(() => {
-    const saved = localStorage.getItem('stock_payments');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return [
-      { id: 1, date: '2026-03-01', category: '급여', amount: 1500000, memo: '3월 정기 납입' },
-      { id: 2, date: '2026-03-15', category: '배당금', amount: 300000, memo: '미국 주식 배당' }
-    ];
-  });
-
-  const [holdings, setHoldings] = useState(() => {
-    const saved = localStorage.getItem('stock_holdings');
-    if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error(e); }
-    }
-    return [
-      { id: 1, ticker: 'AAPL', name: '애플', shares: 10, avgPrice: 180, currentPrice: 190 },
-      { id: 2, ticker: 'TSLA', name: '테슬라', shares: 5, avgPrice: 200, currentPrice: 195 }
-    ];
-  });
-
   const [activeTab, setActiveTab] = useState('payment');
+  
+  // 데이터 상태
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // 조회 조건 및 입력 폼 상태
+  const [searchYear, setSearchYear] = useState('');
+  const [filteredPayments, setFilteredPayments] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [excelMessage, setExcelMessage] = useState({ type: '', text: '' });
 
-  // 2. 데이터가 변경될 때마다 로컬 스토리지에 자동 저장
-  useEffect(() => {
-    localStorage.setItem('stock_payments', JSON.stringify(payments));
-  }, [payments]);
+  // 새로 추가할 행 상태 (하단 테이블에 직접 추가용)
+  const [newRow, setNewRow] = useState({
+    date: new Date().toISOString().split('T')[0],
+    bank: '미래에셋',
+    purpose: '연금',
+    amount: ''
+  });
 
-  useEffect(() => {
-    localStorage.setItem('stock_holdings', JSON.stringify(holdings));
-  }, [holdings]);
-
-  // 납입금액 추가 폼 상태
-  const [newPayment, setNewPayment] = useState({ date: '', category: '급여', amount: '', memo: '' });
-
-  const handleAddPayment = (e) => {
-    e.preventDefault();
-    if (!newPayment.date || !newPayment.amount) return;
-    const item = {
-      id: Date.now(),
-      date: newPayment.date,
-      category: newPayment.category,
-      amount: Number(newPayment.amount),
-      memo: newPayment.memo
-    };
-    setPayments([item, ...payments]);
-    setNewPayment({ date: '', category: '급여', amount: '', memo: '' });
+  // 1. Firebase에서 데이터 불러오기
+  const fetchPayments = async () => {
+    try {
+      setLoading(true);
+      const querySnapshot = await getDocs(collection(db, "payments"));
+      const dataList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      // 최신순 정렬 (날짜 기준)
+      dataList.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setPayments(dataList);
+      setFilteredPayments(dataList);
+    } catch (error) {
+      console.error("데이터 불러오기 실패:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleDeletePayment = (id) => {
-    setPayments(payments.filter(p => p.id !== id));
+  useEffect(() => {
+    fetchPayments();
+  }, []);
+
+  // 2. 조회 로직 (연도별 필터링)
+  const handleSearch = () => {
+    if (!searchYear.trim()) {
+      setFilteredPayments(payments);
+    } else {
+      const filtered = payments.filter(p => p.date && p.date.startsWith(searchYear));
+      setFilteredPayments(filtered);
+    }
+    setSelectedIds([]);
   };
 
-  // 엑셀 업로드 핸들러 (기존 데이터에 누적 저장)
+  // 3. 행 추가 (DB 저장)
+  const handleAddRow = async () => {
+    if (!newRow.date || !newRow.amount) {
+      alert('납입일자와 금액은 필수 입력입니다.');
+      return;
+    }
+
+    try {
+      const itemToSave = {
+        date: newRow.date,
+        bank: newRow.bank,
+        purpose: newRow.purpose,
+        amount: Number(newRow.amount),
+        createdAt: serverTimestamp()
+      };
+
+      await addDoc(collection(db, "payments"), itemToSave);
+      await fetchPayments(); // DB에서 최신 데이터 다시 불러오기
+      
+      // 입력 폼 초기화
+      setNewRow({
+        date: new Date().toISOString().split('T')[0],
+        bank: '미래에셋',
+        purpose: '연금',
+        amount: ''
+      });
+      setExcelMessage({ type: 'success', text: '새 내역이 데이터베이스에 안전하게 저장되었습니다.' });
+    } catch (error) {
+      console.error("추가 실패:", error);
+      alert('데이터 저장 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 4. 체크박스 선택/해제
+  const handleSelectOne = (id) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter(item => item !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked) {
+      setSelectedIds(filteredPayments.map(p => p.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  // 5. 선택 삭제 (DB 삭제)
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0) {
+      alert('삭제할 항목을 선택해주세요.');
+      return;
+    }
+
+    if (!window.confirm(`선택한 ${selectedIds.length개의 항목을 정말 삭제하시겠습니까?`)) return;
+
+    try {
+      for (const id of selectedIds) {
+        await deleteDoc(doc(db, "payments", id));
+      }
+      await fetchPayments();
+      setSelectedIds([]);
+      setExcelMessage({ type: 'success', text: '선택한 항목이 삭제되었습니다.' });
+    } catch (error) {
+      console.error("삭제 실패:", error);
+      alert('삭제 중 오류가 발생했습니다.');
+    }
+  };
+
+  // 6. 엑셀 업로드 (DB 일괄 저장)
   const handleExcelUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const bstr = evt.target.result;
         const workbook = XLSX.read(bstr, { type: 'binary' });
-
-        if (workbook.SheetNames.length === 0) {
-          setExcelMessage({ type: 'error', text: '엑셀 파일에 시트가 존재하지 않습니다.' });
-          return;
-        }
-
         const wsname = workbook.SheetNames[0];
         const ws = workbook.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
@@ -93,23 +169,30 @@ export default function App() {
           return;
         }
 
-        const formattedData = data.map((row, idx) => ({
-          id: Date.now() + idx,
-          date: row['날짜'] || row['date'] || new Date().toISOString().split('T')[0],
-          category: row['카테고리'] || row['구분'] || '기타',
-          amount: Number(row['금액'] || row['amount'] || 0),
-          memo: row['메모'] || row['비고'] || ''
-        }));
+        for (const row of data) {
+          const itemToSave = {
+            date: row['납입일자'] || row['date'] || new Date().toISOString().split('T')[0],
+            bank: row['은행'] || row['bank'] || '미래에셋',
+            purpose: row['목적'] || row['purpose'] || '연금',
+            amount: Number(row['금액'] || row['amount'] || 0),
+            createdAt: serverTimestamp()
+          };
+          await addDoc(collection(db, "payments"), itemToSave);
+        }
 
-        setPayments([...formattedData, ...payments]);
-        setExcelMessage({ type: 'success', text: `성공적으로 ${formattedData.length}개의 데이터를 추가했습니다!` });
+        await fetchPayments();
+        setExcelMessage({ type: 'success', text: `성공적으로 ${data.length}개의 데이터를 업로드하여 동기화했습니다!` });
       } catch (err) {
         console.error(err);
-        setExcelMessage({ type: 'error', text: '엑셀 파일을 읽는 중 오류가 발생했습니다.' });
+        setExcelMessage({ type: 'error', text: '엑셀 파일을 읽거나 저장하는 중 오류가 발생했습니다.' });
       }
     };
     reader.readAsBinaryString(file);
   };
+
+  // 금액 총합 계산
+  const totalAmountAll = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const totalAmountFiltered = filteredPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
@@ -120,16 +203,16 @@ export default function App() {
             <div className="bg-indigo-600 p-2 rounded-xl text-white">
               <TrendingUp className="w-6 h-6" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight">주식 포트폴리오 관리</h1>
+            <h1 className="text-xl font-bold tracking-tight">주식 포트폴리오 관리 시스템</h1>
           </div>
-          <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5">
+          <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            데이터 자동 저장 중
+            클라우드 DB 실시간 동기화 중
           </div>
         </div>
       </header>
 
-      {/* 탭 메뉴 */}
+      {/* 탭 네비게이션 */}
       <div className="max-w-7xl mx-auto w-full px-4 mt-6">
         <div className="flex space-x-2 border-b border-slate-200">
           <button
@@ -156,21 +239,59 @@ export default function App() {
       </div>
 
       {/* 메인 콘텐츠 영역 */}
-      <main className="max-w-7xl mx-auto w-full px-4 py-6 flex-1">
+      <main className="max-w-7xl mx-auto w-full px-4 py-6 flex-1 space-y-6">
         {activeTab === 'payment' && (
           <div className="space-y-6">
-            {/* 상단 액션 바 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-slate-900">납입 금액 내역</h2>
-                <p className="text-sm text-slate-500">입력하거나 엑셀로 업로드한 데이터는 브라우저에 안전하게 저장됩니다.</p>
-              </div>
-              <div className="flex items-center gap-3">
+            
+            {/* 1. 상단 컨트롤 영역 */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+              
+              {/* 좌측: 검색 및 버튼 그룹 */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
+                  <span className="text-sm font-medium text-slate-600">납입연도</span>
+                  <input
+                    type="text"
+                    placeholder="예: 2026"
+                    value={searchYear}
+                    onChange={(e) => setSearchYear(e.target.value)}
+                    className="w-24 bg-transparent text-sm focus:outline-none font-semibold text-slate-800"
+                  />
+                </div>
+
+                <button
+                  onClick={handleSearch}
+                  className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Search className="w-4 h-4" /> 조회
+                </button>
+
+                <button
+                  onClick={handleDeleteSelected}
+                  className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-1.5 shadow-xs"
+                >
+                  <Trash2 className="w-4 h-4" /> 삭제
+                </button>
+
                 <label className="cursor-pointer bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 px-4 py-2 rounded-xl text-sm font-medium transition flex items-center gap-2 shadow-xs">
                   <Upload className="w-4 h-4 text-indigo-600" /> 엑셀 업로드
                   <input type="file" accept=".xlsx, .xls" onChange={handleExcelUpload} className="hidden" />
                 </label>
               </div>
+
+              {/* 우측: 금액 요약 정보 */}
+              <div className="flex items-center gap-6 bg-slate-50 border border-slate-200 px-5 py-3 rounded-xl w-full lg:w-auto justify-around lg:justify-end">
+                <div className="text-right">
+                  <p className="text-xs text-slate-500 font-medium">납입 총액 (전체)</p>
+                  <p className="text-base font-bold text-slate-800">{totalAmountAll.toLocaleString()} 원</p>
+                </div>
+                <div className="h-8 w-px bg-slate-200"></div>
+                <div className="text-right">
+                  <p className="text-xs text-indigo-600 font-medium">조회 총액 (필터)</p>
+                  <p className="text-base font-bold text-indigo-600">{totalAmountFiltered.toLocaleString()} 원</p>
+                </div>
+              </div>
+
             </div>
 
             {/* 알림 메시지 */}
@@ -183,86 +304,98 @@ export default function App() {
               </div>
             )}
 
-            {/* 수동 입력 폼 */}
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-700 mb-4">새 내역 직접 추가하기</h3>
-              <form onSubmit={handleAddPayment} className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <input
-                  type="date"
-                  value={newPayment.date}
-                  onChange={(e) => setNewPayment({ ...newPayment, date: e.target.value })}
-                  className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-                <select
-                  value={newPayment.category}
-                  onChange={(e) => setNewPayment({ ...newPayment, category: e.target.value })}
-                  className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="급여">급여</option>
-                  <option value="배당금">배당금</option>
-                  <option value="추가입금">추가입금</option>
-                  <option value="기타">기타</option>
-                </select>
-                <input
-                  type="number"
-                  placeholder="금액 (원)"
-                  value={newPayment.amount}
-                  onChange={(e) => setNewPayment({ ...newPayment, amount: e.target.value })}
-                  className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="메모 (선택사항)"
-                  value={newPayment.memo}
-                  onChange={(e) => setNewPayment({ ...newPayment, memo: e.target.value })}
-                  className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-sm"
-                >
-                  <Plus className="w-4 h-4" /> 추가하기
-                </button>
-              </form>
+            {/* 직접 입력 행 추가 컨트롤 바 */}
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
+              <span className="text-sm font-bold text-slate-700 ml-1">직접 추가:</span>
+              <input
+                type="date"
+                value={newRow.date}
+                onChange={(e) => setNewRow({ ...newRow, date: e.target.value })}
+                className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <select
+                value={newRow.bank}
+                onChange={(e) => setNewRow({ ...newRow, bank: e.target.value })}
+                className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="미래에셋">미래에셋</option>
+                <option value="KB증권">KB증권</option>
+                <option value="삼성증권">삼성증권</option>
+              </select>
+              <select
+                value={newRow.purpose}
+                onChange={(e) => setNewRow({ ...newRow, purpose: e.target.value })}
+                className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="연금">연금</option>
+                <option value="IRP">IRP</option>
+                <option value="DC">DC</option>
+                <option value="기타">기타</option>
+              </select>
+              <input
+                type="number"
+                placeholder="금액 (원 입력)"
+                value={newRow.amount}
+                onChange={(e) => setNewRow({ ...newRow, amount: e.target.value })}
+                className="px-3 py-2 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-40"
+              />
+              <button
+                onClick={handleAddRow}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition flex items-center gap-1.5 shadow-sm ml-auto"
+              >
+                <Plus className="w-4 h-4" /> 추가
+              </button>
             </div>
 
-            {/* 납입 내역 테이블 */}
+            {/* 2. 하단 상세 내역 (데이터 테이블) */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs font-semibold uppercase tracking-wider">
-                      <th className="py-3 px-4">날짜</th>
-                      <th className="py-3 px-4">구분</th>
+                      <th className="py-3 px-4 w-12 text-center">
+                        <input
+                          type="checkbox"
+                          onChange={handleSelectAll}
+                          checked={filteredPayments.length > 0 && selectedIds.length === filteredPayments.length}
+                          className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                        />
+                      </th>
+                      <th className="py-3 px-4">납입일자</th>
+                      <th className="py-3 px-4">은행</th>
+                      <th className="py-3 px-4">목적 (연금유형)</th>
                       <th className="py-3 px-4 text-right">금액</th>
-                      <th className="py-3 px-4">메모</th>
-                      <th className="py-3 px-4 text-center">관리</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-sm">
-                    {payments.length === 0 ? (
+                    {loading ? (
                       <tr>
-                        <td colSpan="5" className="text-center py-8 text-slate-400">등록된 납입 내역이 없습니다.</td>
+                        <td colSpan="5" className="text-center py-12 text-slate-400">데이터를 불러오는 중입니다...</td>
+                      </tr>
+                    ) : filteredPayments.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className="text-center py-12 text-slate-400">조회된 납입 내역이 없습니다.</td>
                       </tr>
                     ) : (
-                      payments.map((p) => (
+                      filteredPayments.map((p) => (
                         <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-3 px-4 text-slate-600">{p.date}</td>
-                          <td className="py-3 px-4 font-medium text-slate-800">{p.category}</td>
-                          <td className="py-3 px-4 text-right font-semibold text-emerald-600">
-                            {Number(p.amount).toLocaleString()} 원
-                          </td>
-                          <td className="py-3 px-4 text-slate-500">{p.memo || '-'}</td>
                           <td className="py-3 px-4 text-center">
-                            <button
-                              onClick={() => handleDeletePayment(p.id)}
-                              className="text-slate-400 hover:text-rose-600 p-1 rounded-lg transition"
-                              title="삭제"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(p.id)}
+                              onChange={() => handleSelectOne(p.id)}
+                              className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-3 px-4 text-slate-700 font-medium">{p.date}</td>
+                          <td className="py-3 px-4 text-slate-800">{p.bank}</td>
+                          <td className="py-3 px-4">
+                            <span className="inline-block bg-indigo-50 text-indigo-700 font-medium px-2.5 py-1 rounded-lg text-xs border border-indigo-100">
+                              {p.purpose}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right font-bold text-emerald-600">
+                            {Number(p.amount || 0).toLocaleString()} 원
                           </td>
                         </tr>
                       ))
@@ -271,6 +404,7 @@ export default function App() {
                 </table>
               </div>
             </div>
+
           </div>
         )}
 
@@ -278,34 +412,7 @@ export default function App() {
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
               <h2 className="text-lg font-bold text-slate-900">보유 종목 현황</h2>
-              <p className="text-sm text-slate-500">현재 보유 중인 자산 및 주식 포트폴리오 목록입니다.</p>
-            </div>
-            
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs font-semibold uppercase tracking-wider">
-                      <th className="py-3 px-4">티커</th>
-                      <th className="py-3 px-4">종목명</th>
-                      <th className="py-3 px-4 text-right">보유수량</th>
-                      <th className="py-3 px-4 text-right">평단가</th>
-                      <th className="py-3 px-4 text-right">현재가</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-sm">
-                    {holdings.map((h) => (
-                      <tr key={h.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-3 px-4 font-mono font-bold text-indigo-600">{h.ticker}</td>
-                        <td className="py-3 px-4 font-medium text-slate-800">{h.name}</td>
-                        <td className="py-3 px-4 text-right">{h.shares} 주</td>
-                        <td className="py-3 px-4 text-right">${h.avgPrice}</td>
-                        <td className="py-3 px-4 text-right font-semibold">${h.currentPrice}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <p className="text-sm text-slate-500">현재 포트폴리오에 담긴 자산 목록입니다.</p>
             </div>
           </div>
         )}
