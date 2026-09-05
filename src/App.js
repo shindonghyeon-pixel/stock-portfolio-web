@@ -36,7 +36,8 @@ const getTodayString = () => {
 const formatCurrency = (amount, currency = 'KRW') => {
   if (amount === 0 || amount === '' || amount === undefined || isNaN(amount)) return '0';
   const num = Number(amount);
-  if ((currency || 'KRW').toUpperCase() === 'USD') {
+  const currUpper = (currency || 'KRW').toUpperCase();
+  if (currUpper === 'USD') {
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
@@ -232,6 +233,44 @@ export default function App() {
     }
   };
 
+  const fetchMarketPrice = async (code, currency, baseDate) => {
+    const cleanCode = (code || '').trim();
+    const currUpper = (currency || 'KRW').toUpperCase();
+    if (!cleanCode) return 0;
+
+    try {
+      if (currUpper === 'KRW') {
+        // 네이버 금융 API 연동
+        const res = await fetch(`https://m.stock.naver.com/api/stock/${cleanCode}/integration`);
+        if (res.ok) {
+          const json = await res.json();
+          const closePrice = json?.dealTrendInfos?.[0]?.closePrice || json?.stock?.closePrice || json?.closePrice;
+          if (closePrice) {
+            const parsed = parseFloat(String(closePrice).replace(/[^0-9.]/g, ''));
+            if (!isNaN(parsed) && parsed > 0) return parsed;
+          }
+        }
+      } else {
+        // 야후 파이낸스 공개 API 연동 (기준일자 - 1일 기준)
+        const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanCode}?interval=1d&range=5d`);
+        if (res.ok) {
+          const json = await res.json();
+          const quotes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+          if (quotes && quotes.length > 0) {
+            const validPrices = quotes.filter(p => p !== null && !isNaN(p));
+            if (validPrices.length > 0) {
+              return validPrices[validPrices.length - 1];
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`시장 시세 API 조회 실패 (${cleanCode}):`, e);
+    }
+    // 외부 API에서 가져오지 못한 경우 임의로 값을 채우지 않고 0을 반환하여 사용자가 수동 입력할 수 있도록 함
+    return 0;
+  };
+
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
@@ -298,38 +337,12 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // [현재단가 산출 로직 - 시장 시세 연동 (거래현황과 무관)]
-      // 통화가 KRW인 경우: 한국증권거래소 기준일자 기준 (없을 경우 해당 종목의 직전 단가/평균단가 활용)
-      // 통화가 USD인 경우: 미국증권거래소 기준일자 - 1일 기준
-      let currentPrice = avgPrice;
-      const currUpper = (currency || 'KRW').toUpperCase();
-
-      if (currUpper === 'USD') {
-        const bd = new Date(baseDate);
-        bd.setDate(bd.getDate() - 1);
-        const usdTargetDate = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
-        
-        // 시장 시세 API가 없는 웹앱 환경이므로, 해당 통화/종목의 기준일자-1일 이하 시장 데이터가 있다면 매칭
-        const marketMatch = transactions.filter(t => 
-          (t.code || '').trim() === code.trim() &&
-          (t.currency || 'KRW').trim().toUpperCase() === 'USD' &&
-          (t.date || '') <= usdTargetDate
-        ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-
-        if (marketMatch.length > 0) {
-          currentPrice = Number(marketMatch[0].price || avgPrice);
-        }
-      } else {
-        // KRW인 경우: 한국증권거래소 기준일자 기준 (당일 장중단가 또는 종가)
-        const krwMatch = transactions.filter(t => 
-          (t.code || '').trim() === code.trim() &&
-          (t.currency || 'KRW').trim().toUpperCase() === 'KRW' &&
-          (t.date || '') <= baseDate
-        ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-
-        if (krwMatch.length > 0) {
-          currentPrice = Number(krwMatch[0].price || avgPrice);
-        }
+      // 현재단가 산출 (외부 API 호출, 실패 시 0 반환하여 수동 입력 가능하도록 함)
+      let currentPrice = await fetchMarketPrice(code, currency, baseDate);
+      // 기존에 이미 계산된 포트폴리오 데이터가 있다면 수동 입력된 현재단가 유지
+      const existingPf = portfolios.find(p => p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
+      if (existingPf && existingPf.currentPrice > 0 && currentPrice === 0) {
+        currentPrice = existingPf.currentPrice;
       }
 
       const purchaseAmount = qty * avgPrice;
@@ -605,22 +618,46 @@ export default function App() {
   };
 
   const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
-  const handleStockRowChange = (id, field, val) => setStocks(prev => prev.map(s => s.id === id ? { ...s, [field]: val } : s));
+  const handleStockRowChange = (id, field, val) => {
+    setStocks(prev => prev.map(s => {
+      if (s.id === id) {
+        const updated = { ...s, [field]: val };
+        if (field === 'code') {
+          const cUpper = (val || '').trim().toUpperCase();
+          if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
+            updated.currency = 'USD';
+          } else if (/^\d{6}$/.test(cUpper)) {
+            updated.currency = 'KRW';
+          }
+        }
+        return updated;
+      }
+      return s;
+    }));
+  };
   
   const handleTransactionRowChange = (id, field, val) => {
     setTransactions(prev => prev.map(t => {
       if (t.id === id) {
         const updated = { ...t, [field]: val };
-        if (field === 'bank' || field === 'purpose' || field === 'name') {
+        if (field === 'bank' || field === 'purpose' || field === 'name' || field === 'code') {
           const matched = stocks.find(s => 
             (s.bank || '').trim() === (field === 'bank' ? val : updated.bank).trim() &&
             (s.purpose || '').trim() === (field === 'purpose' ? val : updated.purpose).trim() &&
-            ((field === 'name' ? val : updated.name) ? (s.name || '').trim() === (field === 'name' ? val : updated.name).trim() : true)
+            ((field === 'name' ? val : updated.name) ? (s.name || '').trim() === (field === 'name' ? val : updated.name).trim() : true) &&
+            ((field === 'code' ? val : updated.code) ? (s.code || '').trim() === (field === 'code' ? val : updated.code).trim() : true)
           );
           if (matched) {
-            updated.code = matched.code || '';
+            updated.code = matched.code || updated.code;
             updated.name = matched.name || updated.name;
             updated.currency = matched.currency || 'KRW';
+          } else if (field === 'code') {
+            const cUpper = (val || '').trim().toUpperCase();
+            if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
+              updated.currency = 'USD';
+            } else if (/^\d{6}$/.test(cUpper)) {
+              updated.currency = 'KRW';
+            }
           }
         }
         return updated;
@@ -629,7 +666,38 @@ export default function App() {
     }));
   };
 
+  const handlePortfolioRowChange = (id, field, val) => {
+    setPortfolios(prev => prev.map(pf => {
+      if (pf.id === id) {
+        const updated = { ...pf, [field]: val };
+        if (field === 'currentPrice') {
+          const newCurrentPrice = Number(val || 0);
+          updated.currentAmount = updated.qty * newCurrentPrice;
+          updated.evalProfitLoss = updated.currentAmount - updated.purchaseAmount;
+          updated.profitRate = updated.purchaseAmount > 0 ? updated.evalProfitLoss / updated.purchaseAmount : 0;
+        }
+        return updated;
+      }
+      return pf;
+    }));
+  };
+
   const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
+  
+  const filteredStocks = useMemo(() => {
+    return [...stocks].sort((a, b) => {
+      const bankA = (a.bank || '').trim();
+      const bankB = (b.bank || '').trim();
+      if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
+      const purposeA = (a.purpose || '').trim();
+      const purposeB = (b.purpose || '').trim();
+      if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
+      const codeA = (a.code || '').trim();
+      const codeB = (b.code || '').trim();
+      return codeA.localeCompare(codeB, 'ko');
+    });
+  }, [stocks]);
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
       if (!t.date) return true;
@@ -760,7 +828,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {stocks.length > 0 ? stocks.map(stock => (
+                  {filteredStocks.length > 0 ? filteredStocks.map(stock => (
                     <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
                       <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
                       <td className="py-2 px-4"><select value={stock.bank || ''} onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option><option value="미래에셋">미래에셋</option><option value="KB증권">KB증권</option><option value="삼성증권">삼성증권</option></select></td>
@@ -862,7 +930,7 @@ export default function App() {
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
-                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">현재단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가 (수동입력가능)</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
@@ -880,7 +948,15 @@ export default function App() {
                       <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
                       <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
                       <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.currentPrice, pf.currency)}</td>
+                      <td className="py-2 px-4 text-right">
+                        <input 
+                          type="text" 
+                          value={pf.currentPrice === 0 || pf.currentPrice === '' ? '' : formatCurrency(pf.currentPrice, pf.currency)}
+                          onChange={e => handlePortfolioRowChange(pf.id, 'currentPrice', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+                          placeholder="0"
+                          className="w-full px-2 py-1 border border-indigo-200 rounded text-sm text-right font-medium bg-indigo-50/30 text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
                       <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
                       <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
                       <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
