@@ -1,884 +1,966 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { 
+  Search, 
+  Plus, 
+  Trash2, 
+  FileSpreadsheet, 
+  Calendar, 
+  Wallet,
+  Landmark,
+  PiggyBank,
+  CheckSquare,
+  AlertCircle,
+  Save,
+  Layers,
+  ArrowLeftRight,
+  Calculator
+} from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { db } from './firebase';
+import { 
+  collection, 
+  getDocs, 
+  doc, 
+  writeBatch,
+  serverTimestamp 
+} from 'firebase/firestore';
 
-// Firestore 및 Firebase 설정 (기존 구조 완벽 유지)
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc } from 'firebase/firestore';
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDummyKeyForEnvironment",
-  authDomain: "asset-management.firebaseapp.com",
-  projectId: "asset-management",
-  storageBucket: "asset-management.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdef"
+const getTodayString = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+const formatCurrency = (amount, currency = 'KRW') => {
+  if (amount === 0 || amount === '' || amount === undefined || isNaN(amount)) return '0';
+  const num = Number(amount);
+  const currUpper = (currency || 'KRW').toUpperCase();
+  if (currUpper === 'USD') {
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
+};
 
-// 구글 시트 단가현황 API URL
-const GOOGLE_SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
+const parseExcelDate = (val) => {
+  if (val === undefined || val === null || val === '') return getTodayString();
+  if (typeof val === 'number') {
+    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof val === 'string') {
+    let clean = val.trim().replace(/[\.\/]/g, '-');
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
+      const parts = clean.split('-');
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    }
+    const parsed = new Date(clean);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return clean; 
+  }
+  return getTodayString();
+};
 
-export default function AssetManagementApp() {
+export default function App() {
+  const [isTailwindLoaded, setIsTailwindLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('payment');
-
-  // 1. 납입금액 관리 State
+  
+  // 1. 납입금액 관리 상태
   const [payments, setPayments] = useState([]);
-  const [paymentMsg, setPaymentMsg] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [searchYearInput, setSearchYearInput] = useState('');
+  const [appliedSearchYear, setAppliedSearchYear] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [deletedIds, setDeletedIds] = useState([]);
 
-  // 2. 종목 관리 State
+  // 2. 종목 관리 상태
   const [stocks, setStocks] = useState([]);
-  const [stockMsg, setStockMsg] = useState('');
+  const [loadingStocks, setLoadingStocks] = useState(false);
+  const [isSavingStocks, setIsSavingStocks] = useState(false);
+  const [selectedStockIds, setSelectedStockIds] = useState([]);
+  const [deletedStockIds, setDeletedStockIds] = useState([]);
 
-  // 3. 거래현황 State
+  // 3. 거래현황 상태
   const [transactions, setTransactions] = useState([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [isSavingTransactions, setIsSavingTransactions] = useState(false);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState([]);
+  const [deletedTransactionIds, setDeletedTransactionIds] = useState([]);
   const [txStartDate, setTxStartDate] = useState('');
   const [txEndDate, setTxEndDate] = useState('');
-  const [txMsg, setTxMsg] = useState('');
+  const [appliedTxStartDate, setAppliedTxStartDate] = useState('');
+  const [appliedTxEndDate, setAppliedTxEndDate] = useState('');
 
-  // 4. 포트폴리오 현황 State
-  const [portfolioBaseDate, setPortfolioBaseDate] = useState('2026-09-05');
-  const [portfolioBankFilter, setPortfolioBankFilter] = useState('전체 은행');
-  const [portfolioPurposeFilter, setPortfolioPurposeFilter] = useState('전체 목적');
-  const [portfolioList, setPortfolioList] = useState([]);
-  const [portfolioMsg, setPortfolioMsg] = useState('');
+  // 4. 포트폴리오 현황 상태
+  const [portfolios, setPortfolios] = useState([]);
+  const [loadingPortfolios, setLoadingPortfolios] = useState(false);
+  const [isSavingPortfolios, setIsSavingPortfolios] = useState(false);
+  const [selectedPortfolioIds, setSelectedPortfolioIds] = useState([]);
+  const [deletedPortfolioIds, setDeletedPortfolioIds] = useState([]);
+  const [pfBaseDate, setPfBaseDate] = useState(getTodayString());
+  const [pfBankFilter, setPfBankFilter] = useState('');
+  const [pfPurposeFilter, setPfPurposeFilter] = useState('');
+  const [appliedPfBaseDate, setAppliedPfBaseDate] = useState(getTodayString());
+  const [appliedPfBankFilter, setAppliedPfBankFilter] = useState('');
+  const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
 
-  // 초기 데이터 로드
+  const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  const fileInputRef = useRef(null);
+  const stockFileInputRef = useRef(null);
+  const transactionFileInputRef = useRef(null);
+  const [activeUploadType, setActiveUploadType] = useState('payment');
+
   useEffect(() => {
-    loadAllData();
+    if (document.getElementById('tailwind-cdn')) {
+      setIsTailwindLoaded(true);
+    } else {
+      const script = document.createElement('script');
+      script.id = 'tailwind-cdn';
+      script.src = 'https://cdn.tailwindcss.com';
+      script.onload = () => setIsTailwindLoaded(true);
+      document.head.appendChild(script);
+    }
+
+    fetchPayments();
+    fetchStocks();
+    fetchTransactions();
+    fetchPortfolios();
   }, []);
 
-  const loadAllData = async () => {
+  const fetchPayments = async () => {
     try {
-      const paySnap = await getDocs(collection(db, 'payments'));
-      const payData = paySnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setPayments(payData);
-
-      const stockSnap = await getDocs(collection(db, 'stocks'));
-      const stockData = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      stockData.sort((a, b) => {
-        if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '');
-        if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '');
-        return (a.code || '').localeCompare(b.code || '');
-      });
-      setStocks(stockData);
-
-      const txSnap = await getDocs(collection(db, 'transactions'));
-      const txData = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      txData.sort((a, b) => {
-        if ((a.date || '') !== (b.date || '')) return (a.date || '').localeCompare(b.date || '');
-        if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '');
-        if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '');
-        return (a.code || '').localeCompare(b.code || '');
-      });
-      setTransactions(txData);
-
-      const pfSnap = await getDocs(collection(db, 'portfolios'));
-      const pfData = pfSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setPortfolioList(pfData);
-    } catch (e) {
-      console.error("데이터 로딩 실패:", e);
-    }
-  };
-
-  // ==================== 1. 납입금액 관리 로직 ====================
-  const handlePaymentAdd = () => {
-    const newRow = { id: 'temp_' + Date.now(), year: '2026', bank: '', amount: 0, isNew: true, checked: false };
-    setPayments([...payments, newRow]);
-  };
-
-  const handlePaymentDelete = () => {
-    setPayments(payments.filter(p => !p.checked));
-  };
-
-  const handlePaymentExcel = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws);
-      const formatted = data.map((item, idx) => ({
-        id: 'excel_' + Date.now() + '_' + idx,
-        year: String(item['납입연도'] || '2026'),
-        bank: String(item['은행'] || ''),
-        amount: Number(item['납입금액'] || 0),
-        isNew: true
+      setLoading(true);
+      const querySnapshot = await getDocs(collection(db, "payments"));
+      const dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
       }));
-      setPayments([...payments, ...formatted]);
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const handlePaymentSave = async () => {
-    try {
-      for (let p of payments) {
-        const docId = p.id.startsWith('temp_') || p.id.startsWith('excel_') ? 'pay_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5) : p.id;
-        await setDoc(doc(db, 'payments', docId), {
-          year: p.year,
-          bank: p.bank,
-          amount: Number(p.amount)
-        });
-      }
-      setPaymentMsg('납입금액이 성공적으로 저장되었습니다.');
-      setTimeout(() => setPaymentMsg(''), 3000);
-      loadAllData();
-    } catch (e) {
-      alert("저장 실패: " + e.message);
+      dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+      setPayments(dataList);
+      setDeletedIds([]);
+    } catch (error) {
+      console.error("납입 데이터 불러오기 실패:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ==================== 2. 종목 관리 로직 ====================
-  const handleStockAdd = () => {
-    const newRow = { id: 'temp_' + Date.now(), bank: '미래에셋', purpose: '연금', code: '', name: '', type: '', ratio: 0, currency: 'KRW', isNew: true, checked: false };
-    setStocks([...stocks, newRow]);
-  };
-
-  const handleStockDelete = () => {
-    setStocks(stocks.filter(s => !s.checked));
-  };
-
-  const handleStockExcel = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      const bstr = evt.target.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws);
-      const formatted = data.map((item, idx) => ({
-        id: 'excel_' + Date.now() + '_' + idx,
-        bank: String(item['은행'] || '미래에셋'),
-        purpose: String(item['목적'] || '연금'),
-        code: String(item['종목코드'] || ''),
-        name: String(item['종목명'] || ''),
-        type: String(item['종목 유형'] || ''),
-        ratio: Number(item['유형 비율'] || 0),
-        currency: String(item['통화'] || 'KRW'),
-        isNew: true
+  const fetchStocks = async () => {
+    try {
+      setLoadingStocks(true);
+      const querySnapshot = await getDocs(collection(db, "stocks"));
+      let dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
       }));
-      setStocks([...stocks, ...formatted]);
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const handleStockSave = async () => {
-    try {
-      for (let s of stocks) {
-        const docId = s.id.startsWith('temp_') || s.id.startsWith('excel_') ? 'stock_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5) : s.id;
-        await setDoc(doc(db, 'stocks', docId), {
-          bank: s.bank,
-          purpose: s.purpose,
-          code: s.code,
-          name: s.name,
-          type: s.type,
-          ratio: Number(s.ratio),
-          currency: s.currency || 'KRW'
-        });
-      }
-      setStockMsg('종목 정보가 성공적으로 저장되었습니다.');
-      setTimeout(() => setStockMsg(''), 3000);
-      loadAllData();
-    } catch (e) {
-      alert("저장 실패: " + e.message);
+      dataList.sort((a, b) => {
+        const bankA = (a.bank || '').trim();
+        const bankB = (b.bank || '').trim();
+        if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
+        const purposeA = (a.purpose || '').trim();
+        const purposeB = (b.purpose || '').trim();
+        if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
+        const codeA = (a.code || '').trim();
+        const codeB = (b.code || '').trim();
+        return codeA.localeCompare(codeB, 'ko');
+      });
+      setStocks(dataList);
+      setDeletedStockIds([]);
+    } catch (error) {
+      console.error("종목 데이터 불러오기 실패:", error);
+    } finally {
+      setLoadingStocks(false);
     }
   };
 
-  // ==================== 3. 거래현황 로직 ====================
-  const handleTxAdd = () => {
-    const today = new Date().toISOString().split('T')[0];
-    const defaultBank = stocks.length > 0 ? stocks[0].bank : '';
-    const defaultPurpose = stocks.length > 0 ? stocks[0].purpose : '연금';
-    const matchedStock = stocks.find(s => s.bank === defaultBank && s.purpose === defaultPurpose);
+  const fetchTransactions = async () => {
+    try {
+      setLoadingTransactions(true);
+      const querySnapshot = await getDocs(collection(db, "transactions"));
+      let dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      dataList.sort((a, b) => {
+        const dateA = (a.date || '').trim();
+        const dateB = (b.date || '').trim();
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        const bankA = (a.bank || '').trim();
+        const bankB = (b.bank || '').trim();
+        if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
+        const purposeA = (a.purpose || '').trim();
+        const purposeB = (b.purpose || '').trim();
+        if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
+        const codeA = (a.code || '').trim();
+        const codeB = (b.code || '').trim();
+        return codeA.localeCompare(codeB, 'ko');
+      });
+      setTransactions(dataList);
+      setDeletedTransactionIds([]);
+    } catch (error) {
+      console.error("거래현황 데이터 불러오기 실패:", error);
+    } finally {
+      setLoadingTransactions(false);
+    }
+  };
+
+  const fetchPortfolios = async () => {
+    try {
+      setLoadingPortfolios(true);
+      const querySnapshot = await getDocs(collection(db, "portfolios"));
+      let dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setPortfolios(dataList);
+      setDeletedPortfolioIds([]);
+    } catch (error) {
+      console.error("포트폴리오 데이터 불러오기 실패:", error);
+    } finally {
+      setLoadingPortfolios(false);
+    }
+  };
+
+  const handleCalculatePortfolio = async () => {
+    const baseDate = pfBaseDate || getTodayString();
     
-    const newRow = {
+    // 1. 구글시트 단가현황 API 호출
+    let externalPriceMap = new Map();
+    try {
+      const apiUrl = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
+      const res = await fetch(apiUrl);
+      const sheetData = await res.json();
+      console.log("구글시트 단가현황 API 응답:", sheetData);
+      
+      // sheetData가 배열 형태라고 가정하고 종목코드 기준으로 현재단가 매핑
+      if (Array.isArray(sheetData)) {
+        sheetData.forEach(item => {
+          // 키값 (종목코드 또는 code 등 유연하게 대응)
+          const code = String(item.종목코드 || item.code || item.Code || '').trim();
+          const price = Number(item.현재단가 || item.price || item.Price || item.단가 || 0);
+          if (code) {
+            externalPriceMap.set(code, price);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("구글시트 단가현황 API 호출 실패 (수동 입력 사용):", err);
+    }
+
+    const d = new Date(baseDate);
+    d.setDate(d.getDate() - 1);
+    const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    const priorTxs = transactions.filter(t => (t.date || '') <= prevDateStr);
+    const holdingMap = new Map();
+
+    priorTxs.forEach(t => {
+      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
+      if (!holdingMap.has(key)) {
+        holdingMap.set(key, { qty: 0, totalCost: 0, bank: t.bank, purpose: t.purpose, name: t.name, code: t.code, currency: t.currency });
+      }
+      const item = holdingMap.get(key);
+      const buyQ = Number(t.buyQty || 0);
+      const sellQ = Number(t.sellQty || 0);
+      const price = Number(t.price || 0);
+      
+      const newQty = item.qty + buyQ - sellQ;
+      if (buyQ > 0) {
+        item.totalCost += (buyQ * price);
+      }
+      item.qty = newQty;
+    });
+
+    const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
+    const todayTxMap = new Map();
+    todayTxs.forEach(t => {
+      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
+      if (!todayTxMap.has(key)) {
+        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0 });
+      }
+      const item = todayTxMap.get(key);
+      const bQ = Number(t.buyQty || 0);
+      const sQ = Number(t.sellQty || 0);
+      item.buyQty += bQ;
+      item.sellQty += sQ;
+      if (bQ > 0) {
+        item.buyAmount += bQ * Number(t.price || 0);
+      }
+    });
+
+    const allKeys = new Set([...holdingMap.keys(), ...todayTxMap.keys()]);
+    const newPfList = [];
+
+    for (const key of allKeys) {
+      const prevItem = holdingMap.get(key) || { qty: 0, totalCost: 0 };
+      const todayItem = todayTxMap.get(key) || { buyQty: 0, sellQty: 0, buyAmount: 0 };
+      
+      const [bank, purpose, name, code, currency] = key.split('|');
+      
+      const prevQty = prevItem.qty;
+      const prevAvgPrice = prevQty > 0 ? (prevItem.totalCost / prevQty) : 0;
+      
+      const buyQty = todayItem.buyQty;
+      const sellQty = todayItem.sellQty;
+      const buyAmount = todayItem.buyAmount;
+
+      const qty = prevQty + buyQty - sellQty;
+      if (qty <= 0) continue;
+
+      const denom = prevQty + buyQty;
+      const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
+
+      // 현재단가 산출: 1) 구글시트 API 단가현황 매칭 우선, 2) 기존 저장된 값 유지, 3) 0원
+      let currentPrice = 0;
+      const cleanCode = (code || '').trim();
+      if (externalPriceMap.has(cleanCode)) {
+        currentPrice = externalPriceMap.get(cleanCode);
+      } else {
+        const existingPf = portfolios.find(p => p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
+        if (existingPf && existingPf.currentPrice > 0) {
+          currentPrice = existingPf.currentPrice;
+        }
+      }
+
+      const purchaseAmount = qty * avgPrice;
+      const currentAmount = qty * currentPrice;
+      const evalProfitLoss = currentAmount - purchaseAmount;
+      const sellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0;
+      const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
+
+      newPfList.push({
+        id: 'pf_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+        baseDate: baseDate,
+        bank: bank,
+        purpose: purpose,
+        name: name,
+        code: code,
+        currency: currency,
+        avgPrice: avgPrice,
+        currentPrice: currentPrice,
+        qty: qty,
+        purchaseAmount: purchaseAmount,
+        currentAmount: currentAmount,
+        evalProfitLoss: evalProfitLoss,
+        sellProfitLoss: sellProfitLoss,
+        profitRate: profitRate
+      });
+    }
+
+    setPortfolios(newPfList);
+    setSuccessMessage('포트폴리오 계산 및 구글시트 단가 연동이 완료되었습니다.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleAddRow = () => {
+    setPayments(prev => [{
       id: 'temp_' + Date.now(),
-      date: today,
-      bank: defaultBank,
-      purpose: defaultPurpose,
-      name: matchedStock ? matchedStock.name : '',
-      code: matchedStock ? matchedStock.code : '',
-      currency: matchedStock ? (matchedStock.currency || 'KRW') : 'KRW',
+      date: getTodayString(),
+      bank: '',
+      purpose: '연금',
+      amount: 0,
+    }, ...prev]);
+  };
+
+  const handleAddStockRow = () => {
+    setStocks(prev => [...prev, {
+      id: 'temp_stock_' + Date.now(),
+      bank: '미래에셋',
+      purpose: '연금',
+      code: '',
+      name: '',
+      category: '',
+      ratio: 0,
+      currency: 'KRW',
+    }]);
+  };
+
+  const handleAddTransactionRow = () => {
+    setTransactions(prev => [{
+      id: 'temp_tx_' + Date.now(),
+      date: getTodayString(),
+      bank: '',
+      purpose: '연금',
+      name: '',
+      code: '',
+      currency: 'KRW',
       price: 0,
       buyQty: 0,
       sellQty: 0,
-      isNew: true,
-      checked: false
-    };
-    setTransactions([...transactions, newRow]);
+    }, ...prev]);
   };
 
-  const handleTxDelete = () => {
-    setTransactions(transactions.filter(t => !t.checked));
+  const handleDeleteRows = () => {
+    if (selectedIds.length === 0) return;
+    setDeletedIds(prev => [...prev, ...selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'))]);
+    setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
+    setSelectedIds([]);
   };
 
-  const handleTxExcel = (e) => {
+  const handleDeleteStockRows = () => {
+    if (selectedStockIds.length === 0) return;
+    setDeletedStockIds(prev => [...prev, ...selectedStockIds.filter(id => !String(id).startsWith('temp_stock_') && !String(id).startsWith('excel_stock_'))]);
+    setStocks(prev => prev.filter(s => !selectedStockIds.includes(s.id)));
+    setSelectedStockIds([]);
+  };
+
+  const handleDeleteTransactionRows = () => {
+    if (selectedTransactionIds.length === 0) return;
+    setDeletedTransactionIds(prev => [...prev, ...selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_') && !String(id).startsWith('excel_tx_'))]);
+    setTransactions(prev => prev.filter(t => !selectedTransactionIds.includes(t.id)));
+    setSelectedTransactionIds([]);
+  };
+
+  const handleDeletePortfolioRows = () => {
+    if (selectedPortfolioIds.length === 0) return;
+    setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_'))]);
+    setPortfolios(prev => prev.filter(p => !selectedPortfolioIds.includes(p.id)));
+    setSelectedPortfolioIds([]);
+  };
+
+  const triggerExcelUpload = (type) => {
+    setActiveUploadType(type);
+    const refMap = { payment: fileInputRef, stock: stockFileInputRef, transaction: transactionFileInputRef };
+    if (refMap[type].current) {
+      refMap[type].current.value = "";
+      refMap[type].current.click();
+    }
+  };
+
+  const showError = (message) => {
+    setErrorModal({ isOpen: true, message });
+  };
+
+  const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (evt) => {
-      const bstr = evt.target.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws);
-      const formatted = data.map((item, idx) => {
-        const bName = String(item['은행'] || '');
-        const pName = String(item['목적'] || '연금');
-        const sName = String(item['종목명'] || '');
-        const matched = stocks.find(s => s.bank === bName && s.purpose === pName && s.name === sName);
-        return {
-          id: 'excel_' + Date.now() + '_' + idx,
-          date: String(item['거래일자'] || new Date().toISOString().split('T')[0]),
-          bank: bName,
-          purpose: pName,
-          name: sName,
-          code: matched ? matched.code : String(item['종목코드'] || ''),
-          currency: matched ? (matched.currency || 'KRW') : String(item['통화'] || 'KRW'),
-          price: Number(item['단가'] || 0),
-          buyQty: Number(item['매수수량'] || 0),
-          sellQty: Number(item['매도수량'] || 0),
-          isNew: true
-        };
-      });
-      setTransactions([...transactions, ...formatted]);
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const handleTxSave = async () => {
-    try {
-      for (let t of transactions) {
-        const docId = t.id.startsWith('temp_') || t.id.startsWith('excel_') ? 'tx_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5) : t.id;
-        await setDoc(doc(db, 'transactions', docId), {
-          date: t.date,
-          bank: t.bank,
-          purpose: t.purpose,
-          name: t.name,
-          code: t.code,
-          currency: t.currency || 'KRW',
-          price: Number(t.price),
-          buyQty: Number(t.buyQty),
-          sellQty: Number(t.sellQty)
-        });
-      }
-      setTxMsg('거래현황이 성공적으로 저장되었습니다.');
-      setTimeout(() => setTxMsg(''), 3000);
-      loadAllData();
-    } catch (e) {
-      alert("저장 실패: " + e.message);
-    }
-  };
-
-  // ==================== 4. 포트폴리오 현황 로직 ====================
-  const handlePortfolioCalculate = async () => {
-    try {
-      // 구글 시트 단가현황 API에서 데이터 가져오기
-      let sheetPrices = {};
       try {
-        const res = await fetch(GOOGLE_SHEET_API_URL);
-        const sheetData = await res.json();
-        if (Array.isArray(sheetData)) {
-          sheetData.forEach(item => {
-            const code = String(item['종목코드'] || item['code'] || '');
-            const price = Number(item['단가'] || item['price'] || 0);
-            if (code) sheetPrices[code] = price;
-          });
-        }
-      } catch (err) {
-        console.warn("구글 시트 API 연동 실패 (수동 입력 사용):", err);
-      }
+        const data = new Uint8Array(evt.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
 
-      const groupMap = {};
-      transactions.forEach(tx => {
-        if (tx.date && tx.date <= portfolioBaseDate) {
-          const key = `${tx.bank}_${tx.purpose}_${tx.name}_${tx.code}_${tx.currency || 'KRW'}`;
-          if (!groupMap[key]) {
-            groupMap[key] = {
-              bank: tx.bank,
-              purpose: tx.purpose,
-              name: tx.name,
-              code: tx.code,
-              currency: tx.currency || 'KRW',
-              totalQty: 0,
-              totalBuyCost: 0,
-              totalSellQty: 0
+        if (jsonData.length < 2) {
+          showError('엑셀 시트에 데이터가 부족합니다.');
+          return;
+        }
+
+        const headers = jsonData[0];
+        const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
+
+        if (activeUploadType === 'payment') {
+          const excelRows = dataRows.map((row, index) => ({
+            id: 'excel_' + Date.now() + '_' + index,
+            date: parseExcelDate(row[headers.indexOf('납입일자')]),
+            bank: String(row[headers.indexOf('은행')] || '').trim(),
+            purpose: String(row[headers.indexOf('목적')] || '연금').trim(),
+            amount: parseInt(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9]/g, ''), 10) || 0,
+          }));
+          setPayments(prev => [...excelRows, ...prev]);
+        } else if (activeUploadType === 'stock') {
+          const excelRows = dataRows.map((row, index) => ({
+            id: 'excel_stock_' + Date.now() + '_' + index,
+            bank: String(row[headers.indexOf('은행')] || '').trim(),
+            purpose: String(row[headers.indexOf('목적')] || '연금').trim(),
+            code: String(row[headers.indexOf('종목코드')] || '').trim(),
+            name: String(row[headers.indexOf('종목명')] || '').trim(),
+            category: String(row[headers.indexOf('종목 유형')] || '').trim(),
+            ratio: parseFloat(String(row[headers.indexOf('유형 비율')] || '0').replace(/[^0-9.]/g, '')) || 0,
+            currency: String(row[headers.indexOf('통화')] || 'KRW').trim(),
+          }));
+          setStocks(prev => [...excelRows, ...prev]);
+        } else {
+          const excelRows = dataRows.map((row, index) => {
+            const bankVal = String(row[headers.indexOf('은행')] || '').trim();
+            const purposeVal = String(row[headers.indexOf('목적')] || '연금').trim();
+            const nameVal = String(row[headers.indexOf('종목명')] || '').trim();
+            const matchedStock = stocks.find(s => (s.bank || '').trim() === bankVal && (s.purpose || '').trim() === purposeVal && (s.name || '').trim() === nameVal);
+            return {
+              id: 'excel_tx_' + Date.now() + '_' + index,
+              date: parseExcelDate(row[headers.indexOf('거래일자')]),
+              bank: bankVal,
+              purpose: purposeVal,
+              name: nameVal,
+              code: matchedStock ? matchedStock.code : '',
+              currency: matchedStock ? (matchedStock.currency || 'KRW') : 'KRW',
+              price: parseFloat(String(row[headers.indexOf('단가')] || '0').replace(/[^0-9.]/g, '')) || 0,
+              buyQty: parseFloat(String(row[headers.indexOf('매수수량')] || '0').replace(/[^0-9.]/g, '')) || 0,
+              sellQty: parseFloat(String(row[headers.indexOf('매도수량')] || '0').replace(/[^0-9.]/g, '')) || 0,
             };
-          }
-          const buy = Number(tx.buyQty || 0);
-          const sell = Number(tx.sellQty || 0);
-          const price = Number(tx.price || 0);
-
-          groupMap[key].totalQty += (buy - sell);
-          if (buy > 0) {
-            groupMap[key].totalBuyCost += (buy * price);
-          }
-        }
-      });
-
-      const newPortfolios = [];
-      Object.keys(groupMap).forEach(key => {
-        const item = groupMap[key];
-        if (item.totalQty > 0) {
-          const avgPrice = item.totalQty > 0 ? (item.totalBuyCost / item.totalQty) : 0;
-          
-          // 구글 시트 API에서 종목코드 기준으로 현재단가 매칭 (없으면 0, 수동 입력 가능)
-          const currentPrice = sheetPrices[item.code] !== undefined ? sheetPrices[item.code] : 0;
-          
-          const buyAmount = item.totalQty * avgPrice;
-          const currentAmount = item.totalQty * currentPrice;
-          const evalProfit = currentAmount - buyAmount;
-          const sellProfit = 0;
-          const profitRate = buyAmount > 0 ? (evalProfit / buyAmount) : 0;
-
-          newPortfolios.push({
-            id: 'pf_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-            bank: item.bank,
-            purpose: item.purpose,
-            name: item.name,
-            code: item.code,
-            avgPrice: Math.round(avgPrice * 100) / 100,
-            currentPrice: currentPrice,
-            qty: item.totalQty,
-            buyAmount: Math.round(buyAmount),
-            currentAmount: Math.round(currentAmount),
-            evalProfit: Math.round(evalProfit),
-            sellProfit: Math.round(sellProfit),
-            profitRate: profitRate,
-            currency: item.currency,
-            checked: false
           });
+          setTransactions(prev => [...excelRows, ...prev]);
         }
-      });
-
-      setPortfolioList(newPortfolios);
-      setPortfolioMsg('포트폴리오 계산이 완료되었습니다.');
-      setTimeout(() => setPortfolioMsg(''), 3000);
-    } catch (e) {
-      alert("포트폴리오 계산 중 오류 발생: " + e.message);
-    }
-  };
-
-  const handlePortfolioDelete = () => {
-    setPortfolioList(portfolioList.filter(p => !p.checked));
-  };
-
-  const handlePortfolioSave = async () => {
-    try {
-      for (let p of portfolioList) {
-        await setDoc(doc(db, 'portfolios', p.id), {
-          bank: p.bank,
-          purpose: p.purpose,
-          name: p.name,
-          code: p.code,
-          avgPrice: Number(p.avgPrice),
-          currentPrice: Number(p.currentPrice),
-          qty: Number(p.qty),
-          buyAmount: Number(p.buyAmount),
-          currentAmount: Number(p.currentAmount),
-          evalProfit: Number(p.evalProfit),
-          sellProfit: Number(p.sellProfit),
-          profitRate: Number(p.profitRate),
-          currency: p.currency
-        });
+        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      } catch (err) {
+        showError('엑셀 파일을 읽는 중 오류가 발생했습니다.');
       }
-      setPortfolioMsg('포트폴리오 현황이 성공적으로 저장되었습니다.');
-      setTimeout(() => setPortfolioMsg(''), 3000);
-      loadAllData();
-    } catch (e) {
-      alert("저장 실패: " + e.message);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleSaveToDatabase = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const batch = writeBatch(db);
+      deletedIds.forEach(id => batch.delete(doc(db, "payments", id)));
+      payments.forEach(p => {
+        const ref = String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_') ? doc(collection(db, "payments")) : doc(db, "payments", p.id);
+        const data = { date: p.date, bank: p.bank, purpose: p.purpose, amount: Number(p.amount || 0) };
+        if (String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchPayments();
+      setSuccessMessage('납입금액 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const filteredPortfolios = portfolioList.filter(p => {
-    if (portfolioBankFilter !== '전체 은행' && p.bank !== portfolioBankFilter) return false;
-    if (portfolioPurposeFilter !== '전체 목적' && p.purpose !== portfolioPurposeFilter) return false;
-    return true;
-  });
+  const handleSaveStocksToDatabase = async () => {
+    if (isSavingStocks) return;
+    setIsSavingStocks(true);
+    try {
+      const batch = writeBatch(db);
+      deletedStockIds.forEach(id => batch.delete(doc(db, "stocks", id)));
+      stocks.forEach(s => {
+        const ref = String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_') ? doc(collection(db, "stocks")) : doc(db, "stocks", s.id);
+        const data = { bank: s.bank, purpose: s.purpose, code: s.code, name: s.name, category: s.category, ratio: Number(s.ratio || 0), currency: s.currency || 'KRW' };
+        if (String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchStocks();
+      setSuccessMessage('종목 관리 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSavingStocks(false);
+    }
+  };
 
-  const totalCurrentAmount = filteredPortfolios.reduce((acc, cur) => acc + (cur.currentAmount || 0), 0);
-  const totalEvalProfit = filteredPortfolios.reduce((acc, cur) => acc + (cur.evalProfit || 0), 0);
-  const totalSellProfit = filteredPortfolios.reduce((acc, cur) => acc + (cur.sellProfit || 0), 0);
+  const handleSaveTransactionsToDatabase = async () => {
+    if (isSavingTransactions) return;
+    setIsSavingTransactions(true);
+    try {
+      const batch = writeBatch(db);
+      deletedTransactionIds.forEach(id => batch.delete(doc(db, "transactions", id)));
+      transactions.forEach(t => {
+        const ref = String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_') ? doc(collection(db, "transactions")) : doc(db, "transactions", t.id);
+        const data = { date: t.date, bank: t.bank, purpose: t.purpose, name: t.name, code: t.code, currency: t.currency || 'KRW', price: Number(t.price || 0), buyQty: Number(t.buyQty || 0), sellQty: Number(t.sellQty || 0) };
+        if (String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchTransactions();
+      setSuccessMessage('거래현황 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSavingTransactions(false);
+    }
+  };
+
+  const handleSavePortfoliosToDatabase = async () => {
+    if (isSavingPortfolios) return;
+    setIsSavingPortfolios(true);
+    try {
+      const batch = writeBatch(db);
+      deletedPortfolioIds.forEach(id => batch.delete(doc(db, "portfolios", id)));
+      portfolios.forEach(pf => {
+        const ref = String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') ? doc(collection(db, "portfolios")) : doc(db, "portfolios", pf.id);
+        const data = { baseDate: pf.baseDate, bank: pf.bank, purpose: pf.purpose, name: pf.name, code: pf.code, currency: pf.currency || 'KRW', avgPrice: pf.avgPrice, currentPrice: pf.currentPrice, qty: pf.qty, purchaseAmount: pf.purchaseAmount, currentAmount: pf.currentAmount, evalProfitLoss: pf.evalProfitLoss, sellProfitLoss: pf.sellProfitLoss, profitRate: pf.profitRate };
+        if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchPortfolios();
+      setSuccessMessage('포트폴리오 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSavingPortfolios(false);
+    }
+  };
+
+  const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
+  const handleStockRowChange = (id, field, val) => {
+    setStocks(prev => prev.map(s => {
+      if (s.id === id) {
+        const updated = { ...s, [field]: val };
+        if (field === 'code') {
+          const cUpper = (val || '').trim().toUpperCase();
+          if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
+            updated.currency = 'USD';
+          } else if (/^\d{6}$/.test(cUpper)) {
+            updated.currency = 'KRW';
+          }
+        }
+        return updated;
+      }
+      return s;
+    }));
+  };
+  
+  const handleTransactionRowChange = (id, field, val) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === id) {
+        const updated = { ...t, [field]: val };
+        if (field === 'bank' || field === 'purpose' || field === 'name' || field === 'code') {
+          const matched = stocks.find(s => 
+            (s.bank || '').trim() === (field === 'bank' ? val : updated.bank).trim() &&
+            (s.purpose || '').trim() === (field === 'purpose' ? val : updated.purpose).trim() &&
+            ((field === 'name' ? val : updated.name) ? (s.name || '').trim() === (field === 'name' ? val : updated.name).trim() : true) &&
+            ((field === 'code' ? val : updated.code) ? (s.code || '').trim() === (field === 'code' ? val : updated.code).trim() : true)
+          );
+          if (matched) {
+            updated.code = matched.code || updated.code;
+            updated.name = matched.name || updated.name;
+            updated.currency = matched.currency || 'KRW';
+          } else if (field === 'code') {
+            const cUpper = (val || '').trim().toUpperCase();
+            if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
+              updated.currency = 'USD';
+            } else if (/^\d{6}$/.test(cUpper)) {
+              updated.currency = 'KRW';
+            }
+          }
+        }
+        return updated;
+      }
+      return t;
+    }));
+  };
+
+  const handlePortfolioRowChange = (id, field, val) => {
+    setPortfolios(prev => prev.map(pf => {
+      if (pf.id === id) {
+        const updated = { ...pf, [field]: val };
+        if (field === 'currentPrice') {
+          const newCurrentPrice = Number(val || 0);
+          updated.currentAmount = updated.qty * newCurrentPrice;
+          updated.evalProfitLoss = updated.currentAmount - updated.purchaseAmount;
+          updated.profitRate = updated.purchaseAmount > 0 ? updated.evalProfitLoss / updated.purchaseAmount : 0;
+        }
+        return updated;
+      }
+      return pf;
+    }));
+  };
+
+  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
+  
+  const filteredStocks = useMemo(() => {
+    return [...stocks].sort((a, b) => {
+      const bankA = (a.bank || '').trim();
+      const bankB = (b.bank || '').trim();
+      if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
+      const purposeA = (a.purpose || '').trim();
+      const purposeB = (b.purpose || '').trim();
+      if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
+      const codeA = (a.code || '').trim();
+      const codeB = (b.code || '').trim();
+      return codeA.localeCompare(codeB, 'ko');
+    });
+  }, [stocks]);
+
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      if (!t.date) return true;
+      if (appliedTxStartDate && t.date < appliedTxStartDate) return false;
+      if (appliedTxEndDate && t.date > appliedTxEndDate) return false;
+      return true;
+    }).sort((a, b) => {
+      if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
+      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      return (a.code || '').localeCompare(b.code || '', 'ko');
+    });
+  }, [transactions, appliedTxStartDate, appliedTxEndDate]);
+
+  const filteredPortfolios = useMemo(() => portfolios.filter(pf => {
+    if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
+    if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
+    if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
+    return true;
+  }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
+
+  const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+  const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+
+  if (!isTailwindLoaded) return <div className="flex justify-center items-center h-screen text-slate-500 font-sans">준비 중...</div>;
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif', backgroundColor: '#f9f9f9', minHeight: '100vh' }}>
-      <h2 style={{ marginBottom: '20px', color: '#333' }}>자산 관리 웹 애플리케이션</h2>
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={stockFileInputRef} onChange={handleFileChange} />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={transactionFileInputRef} onChange={handleFileChange} />
 
-      {/* 네비게이션 탭 */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #ddd', paddingBottom: '10px' }}>
-        <button 
-          onClick={() => setActiveTab('payment')}
-          style={{ padding: '10px 20px', backgroundColor: activeTab === 'payment' ? '#007bff' : '#f1f1f1', color: activeTab === 'payment' ? '#fff' : '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-          납입금액 관리
-        </button>
-        <button 
-          onClick={() => setActiveTab('stock')}
-          style={{ padding: '10px 20px', backgroundColor: activeTab === 'stock' ? '#007bff' : '#f1f1f1', color: activeTab === 'stock' ? '#fff' : '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-          종목 관리
-        </button>
-        <button 
-          onClick={() => setActiveTab('transaction')}
-          style={{ padding: '10px 20px', backgroundColor: activeTab === 'transaction' ? '#007bff' : '#f1f1f1', color: activeTab === 'transaction' ? '#fff' : '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-          거래현황
-        </button>
-        <button 
-          onClick={() => setActiveTab('portfolio')}
-          style={{ padding: '10px 20px', backgroundColor: activeTab === 'portfolio' ? '#007bff' : '#f1f1f1', color: activeTab === 'portfolio' ? '#fff' : '#333', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-          포트폴리오 현황
-        </button>
-      </div>
-
-      {/* ==================== 1. 납입금액 관리 화면 ==================== */}
-      {activeTab === 'payment' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={loadAllData} style={{ padding: '8px 15px', cursor: 'pointer' }}>조회</button>
-              <button onClick={handlePaymentAdd} style={{ padding: '8px 15px', cursor: 'pointer' }}>추가</button>
-              <button onClick={handlePaymentDelete} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: '#ff4d4d', color: '#fff', border: 'none' }}>삭제</button>
-              <label style={{ padding: '8px 15px', backgroundColor: '#28a745', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>
-                엑셀업로드
-                <input type="file" accept=".xlsx, .xls" onChange={handlePaymentExcel} style={{ display: 'none' }} />
-              </label>
-              <button onClick={handlePaymentSave} style={{ padding: '8px 15px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
-            </div>
-            <div style={{ fontWeight: 'bold' }}>총 건수: {payments.length}건</div>
+      {errorModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 text-rose-600 mb-4"><AlertCircle size={28} /><h3 className="text-xl font-bold">오류 안내</h3></div>
+            <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">{errorModal.message}</div>
+            <div className="flex justify-end"><button onClick={() => setErrorModal({ isOpen: false, message: '' })} className="px-6 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700">확인</button></div>
           </div>
-          {paymentMsg && <div style={{ color: 'green', marginBottom: '10px', fontWeight: 'bold' }}>{paymentMsg}</div>}
-          <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f1f1f1', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '10px', width: '40px' }}><input type="checkbox" /></th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>납입연도</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>은행</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>납입금액</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p, idx) => (
-                <tr key={p.id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <input type="checkbox" checked={p.checked || false} onChange={(e) => {
-                      const updated = [...payments];
-                      updated[idx].checked = e.target.checked;
-                      setPayments(updated);
-                    }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <input type="text" value={p.year || ''} onChange={(e) => {
-                      const updated = [...payments];
-                      updated[idx].year = e.target.value;
-                      setPayments(updated);
-                    }} style={{ width: '100px', padding: '4px' }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <input type="text" value={p.bank || ''} onChange={(e) => {
-                      const updated = [...payments];
-                      updated[idx].bank = e.target.value;
-                      setPayments(updated);
-                    }} style={{ width: '150px', padding: '4px' }} />
-                  </td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>
-                    <input type="number" value={p.amount || 0} onChange={(e) => {
-                      const updated = [...payments];
-                      updated[idx].amount = e.target.value;
-                      setPayments(updated);
-                    }} style={{ width: '150px', padding: '4px', textAlign: 'right' }} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
 
-      {/* ==================== 2. 종목 관리 화면 ==================== */}
-      {activeTab === 'stock' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={loadAllData} style={{ padding: '8px 15px', cursor: 'pointer' }}>조회</button>
-              <button onClick={handleStockAdd} style={{ padding: '8px 15px', cursor: 'pointer' }}>추가</button>
-              <button onClick={handleStockDelete} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: '#ff4d4d', color: '#fff', border: 'none' }}>삭제</button>
-              <label style={{ padding: '8px 15px', backgroundColor: '#28a745', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>
-                엑셀업로드
-                <input type="file" accept=".xlsx, .xls" onChange={handleStockExcel} style={{ display: 'none' }} />
-              </label>
-              <button onClick={handleStockSave} style={{ padding: '8px 15px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
-            </div>
-            <div style={{ fontWeight: 'bold' }}>총 건수: {stocks.length}건</div>
-          </div>
-          {stockMsg && <div style={{ color: 'green', marginBottom: '10px', fontWeight: 'bold' }}>{stockMsg}</div>}
-          <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f1f1f1', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '10px', width: '40px' }}><input type="checkbox" /></th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>은행</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>목적</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목코드</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목명</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목 유형</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>유형 비율</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>통화</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stocks.map((s, idx) => (
-                <tr key={s.id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <input type="checkbox" checked={s.checked || false} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].checked = e.target.checked;
-                      setStocks(updated);
-                    }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <select value={s.bank || '미래에셋'} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].bank = e.target.value;
-                      setStocks(updated);
-                    }} style={{ padding: '4px' }}>
-                      <option value="미래에셋">미래에셋</option>
-                      <option value="KB증권">KB증권</option>
-                      <option value="삼성증권">삼성증권</option>
-                    </select>
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <select value={s.purpose || '연금'} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].purpose = e.target.value;
-                      setStocks(updated);
-                    }} style={{ padding: '4px' }}>
-                      <option value="연금">연금</option>
-                      <option value="IRP">IRP</option>
-                      <option value="DC">DC</option>
-                      <option value="기타">기타</option>
-                    </select>
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <input type="text" value={s.code || ''} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].code = e.target.value;
-                      setStocks(updated);
-                    }} style={{ width: '100px', padding: '4px' }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <input type="text" value={s.name || ''} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].name = e.target.value;
-                      setStocks(updated);
-                    }} style={{ width: '150px', padding: '4px' }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <input type="text" value={s.type || ''} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].type = e.target.value;
-                      setStocks(updated);
-                    }} style={{ width: '100px', padding: '4px' }} />
-                  </td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>
-                    <input type="number" value={s.ratio || 0} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].ratio = e.target.value;
-                      setStocks(updated);
-                    }} style={{ width: '80px', padding: '4px', textAlign: 'right' }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>
-                    <select value={s.currency || 'KRW'} onChange={(e) => {
-                      const updated = [...stocks];
-                      updated[idx].currency = e.target.value;
-                      setStocks(updated);
-                    }} style={{ padding: '4px' }}>
-                      <option value="KRW">KRW</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {successMessage && <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg font-medium">{successMessage}</div>}
+
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3 text-indigo-600"><Landmark size={28} /><h1 className="text-xl font-bold text-slate-900">주식 포트폴리오 관리 시스템</h1></div>
+        <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>Firebase 클라우드 연동 완료</div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex space-x-1 border-b border-slate-200 mb-6 overflow-x-auto">
+          <button onClick={() => setActiveTab('payment')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'payment' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Wallet size={18} />납입금액 관리</button>
+          <button onClick={() => setActiveTab('stock')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'stock' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Layers size={18} />종목 관리</button>
+          <button onClick={() => setActiveTab('transaction')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'transaction' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><ArrowLeftRight size={18} />거래현황</button>
+          <button onClick={() => setActiveTab('portfolio')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'portfolio' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><PiggyBank size={18} />포트폴리오 현황</button>
         </div>
-      )}
 
-      {/* ==================== 3. 거래현황 화면 ==================== */}
-      {activeTab === 'transaction' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <span>거래일자:</span>
-              <input type="date" value={txStartDate} onChange={(e) => setTxStartDate(e.target.value)} style={{ padding: '6px' }} />
-              ~
-              <input type="date" value={txEndDate} onChange={(e) => setTxEndDate(e.target.value)} style={{ padding: '6px' }} />
-              <button onClick={loadAllData} style={{ padding: '8px 15px', cursor: 'pointer' }}>조회</button>
-              <button onClick={handleTxAdd} style={{ padding: '8px 15px', cursor: 'pointer' }}>추가</button>
-              <button onClick={handleTxDelete} style={{ padding: '8px 15px', cursor: 'pointer', backgroundColor: '#ff4d4d', color: '#fff', border: 'none' }}>삭제</button>
-              <label style={{ padding: '8px 15px', backgroundColor: '#28a745', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>
-                엑셀업로드
-                <input type="file" accept=".xlsx, .xls" onChange={handleTxExcel} style={{ display: 'none' }} />
-              </label>
-              <button onClick={handleTxSave} style={{ padding: '8px 15px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
+        {/* 1. 납입금액 관리 탭 */}
+        {activeTab === 'payment' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
+                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteRows} disabled={selectedIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedIds.length > 0 ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('payment')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveToDatabase} disabled={isSaving} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSaving ? '저장 중...' : '저장'}</button>
+              </div>
+              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto">
+                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-lg font-bold text-slate-800">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+                <div className="w-px h-10 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-lg font-bold text-indigo-700">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+              </div>
             </div>
-            <div style={{ fontWeight: 'bold' }}>
-              총 건수: {transactions.filter(t => (!txStartDate || t.date >= txStartDate) && (!txEndDate || t.date <= txEndDate)).length}건
-            </div>
-          </div>
-          {txMsg && <div style={{ color: 'green', marginBottom: '10px', fontWeight: 'bold' }}>{txMsg}</div>}
-          <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f1f1f1', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '10px', width: '40px' }}><input type="checkbox" /></th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>거래일자</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>은행</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>목적</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목명</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목코드</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>통화</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>단가</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>매수수량</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>매도수량</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions
-                .filter(t => (!txStartDate || t.date >= txStartDate) && (!txEndDate || t.date <= txEndDate))
-                .map((t, idx) => {
-                  const uniqueBanks = [...new Set(stocks.map(s => s.bank))];
-                  const filteredPurposes = [...new Set(stocks.filter(s => s.bank === t.bank).map(s => s.purpose))];
-                  const filteredNames = [...new Set(stocks.filter(s => s.bank === t.bank && s.purpose === t.purpose).map(s => s.name))];
-
-                  return (
-                    <tr key={t.id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                      <td style={{ padding: '10px', textAlign: 'center' }}>
-                        <input type="checkbox" checked={t.checked || false} onChange={(e) => {
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].checked = e.target.checked;
-                          setTransactions(updated);
-                        }} />
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <input type="date" value={t.date || ''} onChange={(e) => {
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].date = e.target.value;
-                          setTransactions(updated);
-                        }} style={{ padding: '4px' }} />
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <select value={t.bank || ''} onChange={(e) => {
-                          const val = e.target.value;
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].bank = val;
-                          const validPurposes = [...new Set(stocks.filter(s => s.bank === val).map(s => s.purpose))];
-                          updated[realIdx].purpose = validPurposes[0] || '연금';
-                          const validNames = [...new Set(stocks.filter(s => s.bank === val && s.purpose === updated[realIdx].purpose).map(s => s.name))];
-                          updated[realIdx].name = validNames[0] || '';
-                          const matchedStock = stocks.find(s => s.bank === val && s.purpose === updated[realIdx].purpose && s.name === updated[realIdx].name);
-                          updated[realIdx].code = matchedStock ? matchedStock.code : '';
-                          updated[realIdx].currency = matchedStock ? (matchedStock.currency || 'KRW') : 'KRW';
-                          setTransactions(updated);
-                        }} style={{ padding: '4px' }}>
-                          {uniqueBanks.map(b => <option key={b} value={b}>{b}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <select value={t.purpose || ''} onChange={(e) => {
-                          const val = e.target.value;
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].purpose = val;
-                          const validNames = [...new Set(stocks.filter(s => s.bank === updated[realIdx].bank && s.purpose === val).map(s => s.name))];
-                          updated[realIdx].name = validNames[0] || '';
-                          const matchedStock = stocks.find(s => s.bank === updated[realIdx].bank && s.purpose === val && s.name === updated[realIdx].name);
-                          updated[realIdx].code = matchedStock ? matchedStock.code : '';
-                          updated[realIdx].currency = matchedStock ? (matchedStock.currency || 'KRW') : 'KRW';
-                          setTransactions(updated);
-                        }} style={{ padding: '4px' }}>
-                          {filteredPurposes.map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <select value={t.name || ''} onChange={(e) => {
-                          const val = e.target.value;
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].name = val;
-                          const matchedStock = stocks.find(s => s.bank === updated[realIdx].bank && s.purpose === updated[realIdx].purpose && s.name === val);
-                          updated[realIdx].code = matchedStock ? matchedStock.code : '';
-                          updated[realIdx].currency = matchedStock ? (matchedStock.currency || 'KRW') : 'KRW';
-                          setTransactions(updated);
-                        }} style={{ padding: '4px' }}>
-                          {filteredNames.map(n => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <input type="text" readOnly value={t.code || ''} style={{ width: '90px', padding: '4px', backgroundColor: '#e9ecef' }} />
-                      </td>
-                      <td style={{ padding: '10px' }}>
-                        <input type="text" readOnly value={t.currency || 'KRW'} style={{ width: '60px', padding: '4px', backgroundColor: '#e9ecef', textAlign: 'center' }} />
-                      </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
-                        <input type="text" value={t.price ? (t.currency === 'USD' ? Number(t.price).toLocaleString('en-US', { minimumFractionDigits: 2 }) : Number(t.price).toLocaleString()) : ''} onChange={(e) => {
-                          const rawVal = e.target.value.replace(/,/g, '');
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].price = rawVal;
-                          setTransactions(updated);
-                        }} style={{ width: '100px', padding: '4px', textAlign: 'right' }} />
-                      </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
-                        <input type="number" value={t.buyQty || 0} onChange={(e) => {
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].buyQty = e.target.value;
-                          setTransactions(updated);
-                        }} style={{ width: '80px', padding: '4px', textAlign: 'right' }} />
-                      </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
-                        <input type="number" value={t.sellQty || 0} onChange={(e) => {
-                          const updated = [...transactions];
-                          const realIdx = transactions.findIndex(item => item.id === t.id);
-                          updated[realIdx].sellQty = e.target.value;
-                          setTransactions(updated);
-                        }} style={{ width: '80px', padding: '4px', textAlign: 'right' }} />
-                      </td>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPayments.length > 0 && selectedIds.length === filteredPayments.length} onChange={e => setSelectedIds(e.target.checked ? filteredPayments.map(p => p.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">납입일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">금액 (원)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredPayments.length > 0 ? filteredPayments.map(row => (
+                    <tr key={row.id} className={`hover:bg-slate-50 ${selectedIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedIds.includes(row.id)} onChange={() => setSelectedIds(prev => prev.includes(row.id) ? prev.filter(i => i !== row.id) : [...prev, row.id])} /></td>
+                      <td className="py-2 px-4"><input type="date" value={row.date || ''} onChange={e => handleRowChange(row.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={row.bank || ''} onChange={e => handleRowChange(row.id, 'bank', e.target.value)} placeholder="은행 입력" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><select value={row.purpose || '연금'} onChange={e => handleRowChange(row.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                      <td className="py-2 px-4 text-right"><input type="text" value={row.amount === 0 ? '' : formatCurrency(row.amount)} onChange={e => handleRowChange(row.id, 'amount', parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0)} placeholder="0" className="w-full md:w-3/4 px-3 py-1.5 border rounded-md text-sm text-right font-medium bg-white" /></td>
                     </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ==================== 4. 포트폴리오 현황 화면 ==================== */}
-      {activeTab === 'portfolio' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', backgroundColor: '#fff', padding: '15px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-            <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-              <div>
-                <span style={{ marginRight: '5px', fontWeight: 'bold' }}>기준일자</span>
-                <input type="date" value={portfolioBaseDate} onChange={(e) => setPortfolioBaseDate(e.target.value)} style={{ padding: '6px' }} />
-              </div>
-              <div>
-                <span style={{ marginRight: '5px', fontWeight: 'bold' }}>은행</span>
-                <select value={portfolioBankFilter} onChange={(e) => setPortfolioBankFilter(e.target.value)} style={{ padding: '6px' }}>
-                  <option value="전체 은행">전체 은행</option>
-                  {[...new Set(stocks.map(s => s.bank))].map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
-              </div>
-              <div>
-                <span style={{ marginRight: '5px', fontWeight: 'bold' }}>목적</span>
-                <select value={portfolioPurposeFilter} onChange={(e) => setPortfolioPurposeFilter(e.target.value)} style={{ padding: '6px' }}>
-                  <option value="전체 목적">전체 목적</option>
-                  <option value="연금">연금</option>
-                  <option value="IRP">IRP</option>
-                  <option value="DC">DC</option>
-                  <option value="기타">기타</option>
-                </select>
-              </div>
-              <button onClick={loadAllData} style={{ padding: '8px 15px', cursor: 'pointer' }}>조회</button>
-              <button onClick={handlePortfolioCalculate} style={{ padding: '8px 15px', backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>계산</button>
-              <button onClick={handlePortfolioDelete} style={{ padding: '8px 15px', backgroundColor: '#ff4d4d', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
-              <button onClick={handlePortfolioSave} style={{ padding: '8px 15px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
-            </div>
-
-            <div style={{ display: 'flex', gap: '20px', textAlign: 'right' }}>
-              <div>
-                <div style={{ fontSize: '12px', color: '#666' }}>현재금액 총액</div>
-                <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#007bff' }}>{totalCurrentAmount.toLocaleString()}원</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', color: '#666' }}>평가손익 총액</div>
-                <div style={{ fontSize: '16px', fontWeight: 'bold', color: totalEvalProfit >= 0 ? '#28a745' : '#ff4d4d' }}>{totalEvalProfit.toLocaleString()}원</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', color: '#666' }}>매매손익 총액</div>
-                <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#333' }}>{totalSellProfit.toLocaleString()}원</div>
-              </div>
+                  )) : <tr><td colSpan="5" className="py-16 text-center text-slate-500">조회된 납입 내역이 없습니다.</td></tr>}
+                </tbody>
+              </table>
             </div>
           </div>
+        )}
 
-          {portfolioMsg && <div style={{ color: 'green', marginBottom: '10px', fontWeight: 'bold' }}>{portfolioMsg}</div>}
+        {/* 2. 종목 관리 탭 */}
+        {activeTab === 'stock' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button onClick={fetchStocks} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddStockRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteStockRows} disabled={selectedStockIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedStockIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedStockIds.length > 0 && `(${selectedStockIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('stock')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveStocksToDatabase} disabled={isSavingStocks} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingStocks ? '저장 중...' : '저장'}</button>
+              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">등록된 종목 수:</span><span className="text-base font-bold text-slate-800">{stocks.length} 개</span></div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={stocks.length > 0 && selectedStockIds.length === stocks.length} onChange={e => setSelectedStockIds(e.target.checked ? stocks.map(s => s.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">종목코드</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">종목 유형</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">유형 비율 (%)</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-center">통화</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredStocks.length > 0 ? filteredStocks.map(stock => (
+                    <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
+                      <td className="py-2 px-4"><select value={stock.bank || ''} onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option><option value="미래에셋">미래에셋</option><option value="KB증권">KB증권</option><option value="삼성증권">삼성증권</option></select></td>
+                      <td className="py-2 px-4"><select value={stock.purpose || '연금'} onChange={e => handleStockRowChange(stock.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.code || ''} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.name || ''} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.category || ''} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                      <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                    </tr>
+                  )) : <tr><td colSpan="8" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
-          <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#f1f1f1', borderBottom: '1px solid #ddd' }}>
-                <th style={{ padding: '10px', width: '40px' }}><input type="checkbox" /></th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>은행</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>목적</th>
-                <th style={{ padding: '10px', textAlign: 'left' }}>종목명</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>평균단가</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>현재단가</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>수량</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>매입금액</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>현재금액</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>평가손익</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>매매손익</th>
-                <th style={{ padding: '10px', textAlign: 'right' }}>이익율</th>
-                <th style={{ padding: '10px', textAlign: 'center' }}>통화</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPortfolios.map((p, idx) => (
-                <tr key={p.id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>
-                    <input type="checkbox" checked={p.checked || false} onChange={(e) => {
-                      const updated = [...portfolioList];
-                      const realIdx = portfolioList.findIndex(item => item.id === p.id);
-                      updated[realIdx].checked = e.target.checked;
-                      setPortfolioList(updated);
-                    }} />
-                  </td>
-                  <td style={{ padding: '10px' }}>{p.bank}</td>
-                  <td style={{ padding: '10px' }}>{p.purpose}</td>
-                  <td style={{ padding: '10px' }}>{p.name} ({p.code})</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>{Number(p.avgPrice).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>
-                    <input 
-                      type="number" 
-                      value={p.currentPrice} 
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        const updated = [...portfolioList];
-                        const realIdx = portfolioList.findIndex(item => item.id === p.id);
-                        updated[realIdx].currentPrice = val;
-                        
-                        const qty = updated[realIdx].qty;
-                        const avgP = updated[realIdx].avgPrice;
-                        const buyAmt = qty * avgP;
-                        const curAmt = qty * val;
-                        const evProfit = curAmt - buyAmt;
-                        
-                        updated[realIdx].buyAmount = Math.round(buyAmt);
-                        updated[realIdx].currentAmount = Math.round(curAmt);
-                        updated[realIdx].evalProfit = Math.round(evProfit);
-                        updated[realIdx].profitRate = buyAmt > 0 ? (evProfit / buyAmount) : 0;
-                        
-                        setPortfolioList(updated);
-                      }} 
-                      style={{ width: '90px', padding: '4px', textAlign: 'right' }} 
-                    />
-                  </td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>{Number(p.qty).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>{Number(p.buyAmount).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>{Number(p.currentAmount).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: p.evalProfit >= 0 ? 'green' : 'red' }}>{Number(p.evalProfit).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right' }}>{Number(p.sellProfit).toLocaleString()}</td>
-                  <td style={{ padding: '10px', textAlign: 'right', color: p.profitRate >= 0 ? 'green' : 'red' }}>{(p.profitRate * 100).toFixed(2)}%</td>
-                  <td style={{ padding: '10px', textAlign: 'center' }}>{p.currency}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {/* 3. 거래현황 탭 */}
+        {activeTab === 'transaction' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><Calendar size={16} className="text-slate-400" /><input type="date" value={txStartDate} onChange={e => setTxStartDate(e.target.value)} className="text-sm outline-none bg-transparent" /><span className="text-slate-400">~</span><input type="date" value={txEndDate} onChange={e => setTxEndDate(e.target.value)} className="text-sm outline-none bg-transparent" /></div>
+                <button onClick={() => { setAppliedTxStartDate(txStartDate); setAppliedTxEndDate(txEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddTransactionRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteTransactionRows} disabled={selectedTransactionIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTransactionIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('transaction')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveTransactionsToDatabase} disabled={isSavingTransactions} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingTransactions ? '저장 중...' : '저장'}</button>
+              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredTransactions.length} 건</span></div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1100px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredTransactions.length > 0 && selectedTransactionIds.length === filteredTransactions.length} onChange={e => setSelectedTransactionIds(e.target.checked ? filteredTransactions.map(t => t.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">거래일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">종목코드</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">매수수량</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">매도수량</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredTransactions.length > 0 ? filteredTransactions.map(tx => {
+                    const rowNames = Array.from(new Set(stocks.filter(s => (s.bank || '').trim() === (tx.bank || '').trim() && (s.purpose || '').trim() === (tx.purpose || '').trim()).map(s => s.name?.trim()).filter(Boolean)));
+                    return (
+                      <tr key={tx.id} className={`hover:bg-slate-50 ${selectedTransactionIds.includes(tx.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedTransactionIds.includes(tx.id)} onChange={() => setSelectedTransactionIds(prev => prev.includes(tx.id) ? prev.filter(i => i !== tx.id) : [...prev, tx.id])} /></td>
+                        <td className="py-2 px-4"><input type="date" value={tx.date || ''} onChange={e => handleTransactionRowChange(tx.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><select value={tx.bank || ''} onChange={e => handleTransactionRowChange(tx.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
+                        <td className="py-2 px-4"><select value={tx.purpose || '연금'} onChange={e => handleTransactionRowChange(tx.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                        <td className="py-2 px-4"><select value={tx.name || ''} onChange={e => handleTransactionRowChange(tx.id, 'name', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">종목명 선택</option>{rowNames.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
+                        <td className="py-2 px-4"><input type="text" value={tx.code || ''} onChange={e => handleTransactionRowChange(tx.id, 'code', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-center"><input type="text" value={tx.currency || 'KRW'} onChange={e => handleTransactionRowChange(tx.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="text" value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)} onChange={e => handleTransactionRowChange(tx.id, 'price', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.buyQty === 0 ? '' : tx.buyQty} onChange={e => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.sellQty === 0 ? '' : tx.sellQty} onChange={e => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="10" className="py-16 text-center text-slate-500">조회된 거래현황 내역이 없습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 4. 포트폴리오 현황 탭 */}
+        {activeTab === 'portfolio' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">기준일자</span><input type="date" value={pfBaseDate} onChange={e => setPfBaseDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" /></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">은행</span><select value={pfBankFilter} onChange={e => setPfBankFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 은행</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">목적</span><select value={pfPurposeFilter} onChange={e => setPfPurposeFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 목적</option>{availablePurposes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
+                <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                <button onClick={handleDeletePortfolioRows} disabled={selectedPortfolioIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortfolioIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+                <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
+              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.currentAmount || 0), 0))}원</span></div>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0))}원</span></div>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0))}원</span></div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1250px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortfolios.length > 0 && selectedPortfolioIds.length === filteredPortfolios.length} onChange={e => setSelectedPortfolioIds(e.target.checked ? filteredPortfolios.map(p => p.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가 (수동입력가능)</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">평가손익</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매매손익</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">이익율</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => (
+                    <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
+                      <td className="py-3 px-4 text-sm font-medium text-slate-800">{pf.bank}</td>
+                      <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
+                      <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
+                      <td className="py-2 px-4 text-right">
+                        <input 
+                          type="text" 
+                          value={pf.currentPrice === 0 || pf.currentPrice === '' ? '' : formatCurrency(pf.currentPrice, pf.currency)}
+                          onChange={e => handlePortfolioRowChange(pf.id, 'currentPrice', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+                          placeholder="0"
+                          className="w-full px-2 py-1 border border-indigo-200 rounded text-sm text-right font-medium bg-indigo-50/30 text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(Number(pf.profitRate || 0) * 100).toFixed(2)}%</td>
+                      <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
+                    </tr>
+                  )) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }
