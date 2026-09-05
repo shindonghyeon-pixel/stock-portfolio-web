@@ -37,7 +37,7 @@ const formatCurrency = (amount) => {
   return Number(amount).toLocaleString('ko-KR');
 };
 
-// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 함수
+// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 강력한 함수
 const parseExcelDate = (val) => {
   if (!val) return getTodayString();
   
@@ -74,7 +74,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('payment');
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // 저장 중복 방지 상태
   
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
@@ -84,6 +84,17 @@ export default function App() {
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    // [중요] 사용자의 로컬 환경에 Tailwind CSS가 없어도 화면이 예쁘게 나오도록 CDN 강제 삽입
+    if (!document.getElementById('tailwind-cdn')) {
+      const script = document.createElement('script');
+      script.id = 'tailwind-cdn';
+      script.src = 'https://cdn.tailwindcss.com';
+      document.head.appendChild(script);
+    }
+    fetchPayments();
+  }, []);
 
   const fetchPayments = async () => {
     try {
@@ -103,10 +114,6 @@ export default function App() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchPayments();
-  }, []);
 
   const handleSearch = () => {
     setAppliedSearchYear(searchYearInput);
@@ -198,6 +205,7 @@ export default function App() {
         const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
         
         const excelRows = dataRows.map((row, index) => {
+          // 강력해진 날짜 파서 적용
           const rawDate = row[colIndices.date];
           const parsedDate = parseExcelDate(rawDate);
 
@@ -205,7 +213,7 @@ export default function App() {
           const amountNum = parseInt(rawAmount, 10) || 0;
 
           return {
-            id: 'excel_' + Date.now() + '_' + index,
+            id: 'excel_' + Date.now() + '_' + index, // 중복 방지 완벽 ID
             date: parsedDate,
             bank: String(row[colIndices.bank] || '기타').trim(),
             purpose: String(row[colIndices.purpose] || '기타').trim(),
@@ -225,10 +233,10 @@ export default function App() {
   };
 
   const handleSaveToDatabase = async () => {
-    if (isSaving) return; 
+    if (isSaving) return; // 이미 저장 중이면 중복 실행 방지
     
     try {
-      setIsSaving(true); 
+      setIsSaving(true); // 버튼을 '저장 중...' 상태로 변경
 
       // 1. 화면에서 삭제 처리된 항목들을 실제 DB에서 삭제
       for (const id of deletedIds) {
@@ -256,6 +264,7 @@ export default function App() {
         }
       }
 
+      // 3. 작업이 끝나면 깨끗하게 최신 데이터 새로고침
       await fetchPayments();
       setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -263,7 +272,7 @@ export default function App() {
       console.error("저장 실패:", error);
       showError('저장 중 통신 오류가 발생했습니다.');
     } finally {
-      setIsSaving(false); 
+      setIsSaving(false); // 무조건 로딩 상태 해제
     }
   };
 
