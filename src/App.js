@@ -458,7 +458,6 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // 요청하신 대로 조회 기간 내 모든 포트폴리오 현황 일자/현재금액 및 엑셀 업로드/등록된 데이터를 모두 가져오도록 수정
   const handleCalculateTrend = () => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) {
       showError('시작일자와 종료일자를 반드시 입력해주세요.');
@@ -472,53 +471,6 @@ export default function App() {
       return;
     }
 
-    // 1. 포트폴리오 현황에서 조회 기간 내에 존재하는 일자와 금액 집계
-    const portfolioDates = Array.from(
-      new Set(
-        portfolios
-          .map(p => p.baseDate)
-          .filter(dt => dt && dt >= start && dt <= end)
-      )
-    );
-
-    const getPortfolioTotalForDate = (dateStr) => {
-      const itemsForDate = portfolios.filter(p => p.baseDate === dateStr);
-      if (itemsForDate.length === 0) return 0;
-      return itemsForDate.reduce((sum, p) => {
-        const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
-        const mult = isUSD ? exchangeRate : 1;
-        return sum + (Number(p.currentAmount || 0) * mult);
-      }, 0);
-    };
-
-    const dateMap = new Map();
-
-    // 포트폴리오 데이터를 맵에 먼저 등록
-    portfolioDates.forEach(dt => {
-      dateMap.set(dt, {
-        id: 'trend_pf_' + dt,
-        date: dt,
-        amount: getPortfolioTotalForDate(dt),
-        isTemp: true
-      });
-    });
-
-    // 2. 이미 등록되어 있거나 엑셀 업로드 등으로 로드된 trendRows 데이터도 조회 기간 내에 있다면 병합
-    trendRows.forEach(tr => {
-      if (tr.date && tr.date >= start && tr.date <= end) {
-        if (dateMap.has(tr.date)) {
-          // 포트폴리오 금액이 있고 엑셀 금액이 있다면 엑셀/업로드된 금액을 우선하거나 병합 가능 (여기서는 업로드된 금액 또는 기존 맵 데이터 유지)
-          // 엑셀 업로드로 들어온 값 유지
-          dateMap.set(tr.date, { ...tr });
-        } else {
-          dateMap.set(tr.date, { ...tr });
-        }
-      }
-    });
-
-    const finalRows = Array.from(dateMap.values());
-
-    setTrendRows(finalRows);
     setSuccessMessage('총액 Trend 조회가 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
@@ -688,7 +640,22 @@ export default function App() {
           }));
           setStocks(prev => [...excelRows, ...prev]);
         } else if (activeUploadType === 'trend') {
-          const uploadedRows = dataRows.map((row, index) => {
+          // 포트폴리오 현황에 존재하는 일자(baseDate)와 현재금액 총액 목록 추출
+          const portfolioDateAmountMap = new Map();
+          const uniquePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean)));
+          
+          uniquePortfolioDates.forEach(dt => {
+            const itemsForDate = portfolios.filter(p => p.baseDate === dt);
+            const totalAmt = itemsForDate.reduce((sum, p) => {
+              const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
+              const mult = isUSD ? exchangeRate : 1;
+              return sum + (Number(p.currentAmount || 0) * mult);
+            }, 0);
+            portfolioDateAmountMap.set(dt, totalAmt);
+          });
+
+          // 엑셀 업로드 데이터 파싱
+          const rawUploadedRows = dataRows.map((row, index) => {
             const dt = parseExcelDate(row[0]);
             const amt = parseFloat(String(row[1] || '0').replace(/[^0-9.]/g, '')) || 0;
             return {
@@ -698,28 +665,36 @@ export default function App() {
             };
           });
 
-          // 엑셀 업로드 시 trendRows 상태 및 DB(trends 컬렉션)에 바로 반영
-          setTrendRows(prev => {
-            const map = new Map();
-            prev.forEach(r => map.set(r.date, r));
-            uploadedRows.forEach(r => {
-              map.set(r.date, { ...r, id: map.has(r.date) ? map.get(r.date).id : r.id });
-            });
-            return Array.from(map.values());
+          // 포트폴리오 계산된 일자 및 금액과 동일한 행은 제외(삭제)
+          const uploadedRows = rawUploadedRows.filter(row => {
+            if (portfolioDateAmountMap.has(row.date)) {
+              const pfAmt = portfolioDateAmountMap.get(row.date);
+              // 일자와 금액이 모두 일치하면 제외
+              if (Math.abs(pfAmt - row.amount) < 1) {
+                return false;
+              }
+            }
+            return true;
           });
 
+          setTrendRows(uploadedRows);
+
           try {
+            const querySnapshot = await getDocs(collection(db, "trends"));
             const batch = writeBatch(db);
+            querySnapshot.docs.forEach(docSnap => {
+              batch.delete(doc(db, "trends", docSnap.id));
+            });
             uploadedRows.forEach(tr => {
-              const existingRef = doc(collection(db, "trends"));
-              batch.set(existingRef, { date: tr.date, amount: Number(tr.amount || 0), createdAt: serverTimestamp() }, { merge: true });
+              const newRef = doc(collection(db, "trends"));
+              batch.set(newRef, { date: tr.date, amount: Number(tr.amount || 0), createdAt: serverTimestamp() });
             });
             await batch.commit();
             await fetchTrends();
-            setSuccessMessage('총액 Trend 엑셀 업로드 및 DB 반영이 완료되었습니다.');
+            setSuccessMessage('총액 Trend 엑셀 업로드 완료 (포트폴리오 일치 데이터 제외됨)');
           } catch (dbErr) {
-            console.error("DB 자동 저장 실패:", dbErr);
-            setSuccessMessage('엑셀이 로드되었으나 DB 자동 저장 중 오류가 발생했습니다.');
+            console.error("DB 갱신 실패:", dbErr);
+            setSuccessMessage('엑셀이 로드되었으나 DB 갱신 중 오류가 발생했습니다.');
           }
         } else {
           const excelRows = dataRows.map((row, index) => {
@@ -962,7 +937,7 @@ export default function App() {
       return true;
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(a.bank || '', 'ko');
       if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
@@ -1001,7 +976,6 @@ export default function App() {
   }, [trendTotalPayment, trendProfitRateInput]);
 
   const sortedTrendRows = useMemo(() => {
-    // 엑셀 업로드 및 조회된 데이터들을 조회 기간 내에서 일자 역순(최신순)으로 정렬
     const filtered = trendRows.filter(tr => {
       if (!appliedTrendStartDate || !appliedTrendEndDate) return true;
       return tr.date && tr.date >= appliedTrendStartDate && tr.date <= appliedTrendEndDate;
@@ -1379,7 +1353,7 @@ export default function App() {
                         <td className={`py-3 px-4 text-sm text-right font-bold ${profitAmount >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(profitAmount)}원</td>
                       </tr>
                     );
-                  }) : <tr><td colSpan="6" className="py-16 text-center text-slate-500">조회된 총액 Trend 내역이 없습니다. 기간 설정 후 [조회]를 누르거나 추가/엑셀업로드를 해주세요.</td></tr>}
+                  }) : <tr><td colSpan="6" className="py-16 text-center text-slate-500">조회된 총액 Trend 내역이 없습니다. 엑셀 업로드나 추가를 진행해 주세요.</td></tr>}
                 </tbody>
               </table>
             </div>
