@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 
-// Firestore 및 Firebase 설정 (기존 구조 유지)
+// Firestore 및 Firebase 설정 (기존 구조 완벽 유지)
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, setDoc, doc, deleteDoc } from 'firebase/firestore';
 
@@ -21,7 +21,6 @@ const db = getFirestore(app);
 const GOOGLE_SHEET_API_URL = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
 
 export default function AssetManagementApp() {
-  // 탭 상태: 'payment' | 'stock' | 'transaction' | 'portfolio'
   const [activeTab, setActiveTab] = useState('payment');
 
   // 1. 납입금액 관리 State
@@ -52,15 +51,12 @@ export default function AssetManagementApp() {
 
   const loadAllData = async () => {
     try {
-      // 납입금액 로드
       const paySnap = await getDocs(collection(db, 'payments'));
       const payData = paySnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setPayments(payData);
 
-      // 종목관리 로드
       const stockSnap = await getDocs(collection(db, 'stocks'));
       const stockData = stockSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // 은행별, 목적별, 종목코드별 정렬
       stockData.sort((a, b) => {
         if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '');
         if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '');
@@ -68,10 +64,8 @@ export default function AssetManagementApp() {
       });
       setStocks(stockData);
 
-      // 거래현황 로드
       const txSnap = await getDocs(collection(db, 'transactions'));
       const txData = txSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // 거래일자, 은행, 목적, 종목코드 순 정렬
       txData.sort((a, b) => {
         if ((a.date || '') !== (b.date || '')) return (a.date || '').localeCompare(b.date || '');
         if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '');
@@ -80,17 +74,15 @@ export default function AssetManagementApp() {
       });
       setTransactions(txData);
 
-      // 포트폴리오 로드
       const pfSnap = await getDocs(collection(db, 'portfolios'));
       const pfData = pfSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       setPortfolioList(pfData);
-
     } catch (e) {
       console.error("데이터 로딩 실패:", e);
     }
   };
 
-  // ==================== [1. 납입금액 관리 로직] ====================
+  // ==================== 1. 납입금액 관리 로직 ====================
   const handlePaymentAdd = () => {
     const newRow = { id: 'temp_' + Date.now(), year: '2026', bank: '', amount: 0, isNew: true, checked: false };
     setPayments([...payments, newRow]);
@@ -140,8 +132,7 @@ export default function AssetManagementApp() {
     }
   };
 
-
-  // ==================== [2. 종목 관리 로직] ====================
+  // ==================== 2. 종목 관리 로직 ====================
   const handleStockAdd = () => {
     const newRow = { id: 'temp_' + Date.now(), bank: '미래에셋', purpose: '연금', code: '', name: '', type: '', ratio: 0, currency: 'KRW', isNew: true, checked: false };
     setStocks([...stocks, newRow]);
@@ -199,8 +190,7 @@ export default function AssetManagementApp() {
     }
   };
 
-
-  // ==================== [3. 거래현황 로직] ====================
+  // ==================== 3. 거래현황 로직 ====================
   const handleTxAdd = () => {
     const today = new Date().toISOString().split('T')[0];
     const defaultBank = stocks.length > 0 ? stocks[0].bank : '';
@@ -214,10 +204,10 @@ export default function AssetManagementApp() {
       purpose: defaultPurpose,
       name: matchedStock ? matchedStock.name : '',
       code: matchedStock ? matchedStock.code : '',
-      price: 0,
-        buyQty: 0,
-      sellQty: 0,
       currency: matchedStock ? (matchedStock.currency || 'KRW') : 'KRW',
+      price: 0,
+      buyQty: 0,
+      sellQty: 0,
       isNew: true,
       checked: false
     };
@@ -238,19 +228,25 @@ export default function AssetManagementApp() {
       const wsname = wb.SheetNames[0];
       const ws = wb.Sheets[wsname];
       const data = XLSX.utils.sheet_to_json(ws);
-      const formatted = data.map((item, idx) => ({
-        id: 'excel_' + Date.now() + '_' + idx,
-        date: String(item['거래일자'] || new Date().toISOString().split('T')[0]),
-        bank: String(item['은행'] || ''),
-        purpose: String(item['목적'] || '연금'),
-        name: String(item['종목명'] || ''),
-        code: String(item['종목코드'] || ''),
-        price: Number(item['단가'] || 0),
-        buyQty: Number(item['매수수량'] || 0),
-        sellQty: Number(item['매도수량'] || 0),
-        currency: String(item['통화'] || 'KRW'),
-        isNew: true
-      }));
+      const formatted = data.map((item, idx) => {
+        const bName = String(item['은행'] || '');
+        const pName = String(item['목적'] || '연금');
+        const sName = String(item['종목명'] || '');
+        const matched = stocks.find(s => s.bank === bName && s.purpose === pName && s.name === sName);
+        return {
+          id: 'excel_' + Date.now() + '_' + idx,
+          date: String(item['거래일자'] || new Date().toISOString().split('T')[0]),
+          bank: bName,
+          purpose: pName,
+          name: sName,
+          code: matched ? matched.code : String(item['종목코드'] || ''),
+          currency: matched ? (matched.currency || 'KRW') : String(item['통화'] || 'KRW'),
+          price: Number(item['단가'] || 0),
+          buyQty: Number(item['매수수량'] || 0),
+          sellQty: Number(item['매도수량'] || 0),
+          isNew: true
+        };
+      });
       setTransactions([...transactions, ...formatted]);
     };
     reader.readAsBinaryString(file);
@@ -266,10 +262,10 @@ export default function AssetManagementApp() {
           purpose: t.purpose,
           name: t.name,
           code: t.code,
+          currency: t.currency || 'KRW',
           price: Number(t.price),
           buyQty: Number(t.buyQty),
-          sellQty: Number(t.sellQty),
-          currency: t.currency || 'KRW'
+          sellQty: Number(t.sellQty)
         });
       }
       setTxMsg('거래현황이 성공적으로 저장되었습니다.');
@@ -280,16 +276,14 @@ export default function AssetManagementApp() {
     }
   };
 
-
-  // ==================== [4. 포트폴리오 현황 로직] ====================
+  // ==================== 4. 포트폴리오 현황 로직 ====================
   const handlePortfolioCalculate = async () => {
     try {
-      // 1. 구글 시트 웹 앱 API에서 단가현황 가져오기
+      // 구글 시트 단가현황 API에서 데이터 가져오기
       let sheetPrices = {};
       try {
         const res = await fetch(GOOGLE_SHEET_API_URL);
         const sheetData = await res.json();
-        // 데이터 구조가 배열 혹은 객체 형태일 때 종목코드 기준 맵핑
         if (Array.isArray(sheetData)) {
           sheetData.forEach(item => {
             const code = String(item['종목코드'] || item['code'] || '');
@@ -298,13 +292,10 @@ export default function AssetManagementApp() {
           });
         }
       } catch (err) {
-        console.warn("구글 시트 API 호출 실패, 수동 입력 및 기본값 사용:", err);
+        console.warn("구글 시트 API 연동 실패 (수동 입력 사용):", err);
       }
 
-      // 2. 포트폴리오 계산 대상 그룹화 (은행, 목적, 종목명, 통화)
       const groupMap = {};
-
-      // 거래현황을 기준으로 자산 집계
       transactions.forEach(tx => {
         if (tx.date && tx.date <= portfolioBaseDate) {
           const key = `${tx.bank}_${tx.purpose}_${tx.name}_${tx.code}_${tx.currency || 'KRW'}`;
@@ -337,13 +328,13 @@ export default function AssetManagementApp() {
         if (item.totalQty > 0) {
           const avgPrice = item.totalQty > 0 ? (item.totalBuyCost / item.totalQty) : 0;
           
-          // 구글 시트 단가현황에서 가져오기, 없으면 기존 화면이나 0 (수동 입력 가능)
+          // 구글 시트 API에서 종목코드 기준으로 현재단가 매칭 (없으면 0, 수동 입력 가능)
           const currentPrice = sheetPrices[item.code] !== undefined ? sheetPrices[item.code] : 0;
           
           const buyAmount = item.totalQty * avgPrice;
           const currentAmount = item.totalQty * currentPrice;
           const evalProfit = currentAmount - buyAmount;
-          const sellProfit = 0; // 매매손익 기본값
+          const sellProfit = 0;
           const profitRate = buyAmount > 0 ? (evalProfit / buyAmount) : 0;
 
           newPortfolios.push({
@@ -367,7 +358,7 @@ export default function AssetManagementApp() {
       });
 
       setPortfolioList(newPortfolios);
-      setPortfolioMsg('포트폴리오 계산이 완료되었습니다. (구글 시트 단가 연동됨)');
+      setPortfolioMsg('포트폴리오 계산이 완료되었습니다.');
       setTimeout(() => setPortfolioMsg(''), 3000);
     } catch (e) {
       alert("포트폴리오 계산 중 오류 발생: " + e.message);
@@ -405,7 +396,6 @@ export default function AssetManagementApp() {
     }
   };
 
-  // 포트폴리오 필터링 적용된 목록
   const filteredPortfolios = portfolioList.filter(p => {
     if (portfolioBankFilter !== '전체 은행' && p.bank !== portfolioBankFilter) return false;
     if (portfolioPurposeFilter !== '전체 목적' && p.purpose !== portfolioPurposeFilter) return false;
@@ -415,7 +405,6 @@ export default function AssetManagementApp() {
   const totalCurrentAmount = filteredPortfolios.reduce((acc, cur) => acc + (cur.currentAmount || 0), 0);
   const totalEvalProfit = filteredPortfolios.reduce((acc, cur) => acc + (cur.evalProfit || 0), 0);
   const totalSellProfit = filteredPortfolios.reduce((acc, cur) => acc + (cur.sellProfit || 0), 0);
-
 
   return (
     <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif', backgroundColor: '#f9f9f9', minHeight: '100vh' }}>
@@ -659,11 +648,8 @@ export default function AssetManagementApp() {
               {transactions
                 .filter(t => (!txStartDate || t.date >= txStartDate) && (!txEndDate || t.date <= txEndDate))
                 .map((t, idx) => {
-                  // 종목관리에서 해당 은행의 고유 은행 목록 추출
                   const uniqueBanks = [...new Set(stocks.map(s => s.bank))];
-                  // 선택된 은행의 목적 목록
                   const filteredPurposes = [...new Set(stocks.filter(s => s.bank === t.bank).map(s => s.purpose))];
-                  // 선택된 은행 & 목적의 종목명 목록
                   const filteredNames = [...new Set(stocks.filter(s => s.bank === t.bank && s.purpose === t.purpose).map(s => s.name))];
 
                   return (
@@ -690,7 +676,6 @@ export default function AssetManagementApp() {
                           const updated = [...transactions];
                           const realIdx = transactions.findIndex(item => item.id === t.id);
                           updated[realIdx].bank = val;
-                          // 연관된 목적, 종목명, 종목코드, 통화 자동 갱신
                           const validPurposes = [...new Set(stocks.filter(s => s.bank === val).map(s => s.purpose))];
                           updated[realIdx].purpose = validPurposes[0] || '연금';
                           const validNames = [...new Set(stocks.filter(s => s.bank === val && s.purpose === updated[realIdx].purpose).map(s => s.name))];
@@ -775,7 +760,6 @@ export default function AssetManagementApp() {
       {/* ==================== 4. 포트폴리오 현황 화면 ==================== */}
       {activeTab === 'portfolio' && (
         <div>
-          {/* 상단 컨트롤 영역 */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', backgroundColor: '#fff', padding: '15px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
             <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
               <div>
@@ -805,7 +789,6 @@ export default function AssetManagementApp() {
               <button onClick={handlePortfolioSave} style={{ padding: '8px 15px', backgroundColor: '#007bff', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
             </div>
 
-            {/* 우측 금액 요약 정보 */}
             <div style={{ display: 'flex', gap: '20px', textAlign: 'right' }}>
               <div>
                 <div style={{ fontSize: '12px', color: '#666' }}>현재금액 총액</div>
@@ -824,7 +807,6 @@ export default function AssetManagementApp() {
 
           {portfolioMsg && <div style={{ color: 'green', marginBottom: '10px', fontWeight: 'bold' }}>{portfolioMsg}</div>}
 
-          {/* 하단 데이터 그리드 (테이블) */}
           <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: '#fff' }}>
             <thead>
               <tr style={{ backgroundColor: '#f1f1f1', borderBottom: '1px solid #ddd' }}>
@@ -868,7 +850,6 @@ export default function AssetManagementApp() {
                         const realIdx = portfolioList.findIndex(item => item.id === p.id);
                         updated[realIdx].currentPrice = val;
                         
-                        // 파생 변수 재계산
                         const qty = updated[realIdx].qty;
                         const avgP = updated[realIdx].avgPrice;
                         const buyAmt = qty * avgP;
