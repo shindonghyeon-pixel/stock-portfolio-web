@@ -9,7 +9,8 @@ import {
   Landmark,
   PiggyBank,
   CheckSquare,
-  AlertCircle
+  AlertCircle,
+  Save
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -33,7 +34,7 @@ const getTodayString = () => {
 
 const formatCurrency = (amount) => {
   if (amount === 0 || !amount) return '0';
-  return amount.toLocaleString('ko-KR');
+  return Number(amount).toLocaleString('ko-KR');
 };
 
 export default function App() {
@@ -44,20 +45,24 @@ export default function App() {
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   
+  // 삭제할 ID들을 모아두는 상태
+  const [deletedIds, setDeletedIds] = useState([]);
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
+  const [successMessage, setSuccessMessage] = useState('');
 
-  // 1. Firebase Firestore에서 데이터 불러오기
+  // 1. Firebase 데이터 불러오기
   const fetchPayments = async () => {
     try {
       setLoading(true);
       const querySnapshot = await getDocs(collection(db, "payments"));
       const dataList = querySnapshot.docs.map(docSnap => ({
         id: docSnap.id,
+        isNew: false, // 기존 DB 데이터
         ...docSnap.data()
       }));
-      // 최신순 또는 날짜순 정렬
       dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       setPayments(dataList);
+      setDeletedIds([]);
     } catch (error) {
       console.error("데이터 불러오기 실패:", error);
     } finally {
@@ -74,44 +79,37 @@ export default function App() {
     setSelectedIds([]); 
   };
 
-  // 2. 행 추가 (DB 저장)
-  const handleAddRow = async () => {
-    try {
-      const newRowData = {
-        date: getTodayString(),
-        bank: '미래에셋',
-        purpose: '연금',
-        amount: 0,
-        createdAt: serverTimestamp()
-      };
-      const docRef = await addDoc(collection(db, "payments"), newRowData);
-      setPayments(prev => [{ id: docRef.id, ...newRowData }, ...prev]);
-    } catch (error) {
-      console.error("추가 실패:", error);
-      showError('데이터 추가 중 오류가 발생했습니다.');
-    }
+  // 2. 추가 버튼: 화면에 임시 행 추가 (저장 버튼을 눌러야 DB 반영)
+  const handleAddRow = () => {
+    const newRow = {
+      id: 'temp_' + Date.now(), // 임시 ID
+      date: getTodayString(),
+      bank: '미래에셋',
+      purpose: '연금',
+      amount: 0,
+      isNew: true // 새로 추가된 항목 표시
+    };
+    setPayments(prev => [newRow, ...prev]);
   };
 
-  // 3. 선택 삭제 (DB 삭제)
-  const handleDeleteRows = async () => {
+  // 3. 삭제 버튼: 화면상에서 체크된 항목을 목록에서 제외하고 삭제 대기열에 등록
+  const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
-    try {
-      for (const id of selectedIds) {
-        await deleteDoc(doc(db, "payments", id));
-      }
-      setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
-      setSelectedIds([]);
-    } catch (error) {
-      console.error("삭제 실패:", error);
-      showError('데이터 삭제 중 오류가 발생했습니다.');
-    }
+    
+    // DB에 이미 존재하는 데이터(임시 ID가 아닌 것)는 삭제 대기열에 추가
+    const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_'));
+    setDeletedIds(prev => [...prev, ...targetRealIds]);
+
+    // 화면에서 즉시 제거
+    setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
+    setSelectedIds([]);
   };
 
   const showError = (message) => {
     setErrorModal({ isOpen: true, message });
   };
 
-  // 4. 엑셀 업로드 (DB 일괄 저장)
+  // 4. 엑셀 업로드: 데이터를 파싱하여 화면에 일괄 추가 (저장 버튼을 눌러야 DB 반영)
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -123,7 +121,7 @@ export default function App() {
     }
 
     const reader = new FileReader();
-    reader.onload = async (evt) => {
+    reader.onload = (evt) => {
       try {
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -163,27 +161,26 @@ export default function App() {
           amount: headers.indexOf('금액'),
         };
 
-        const addedList = [];
-        for (const row of dataRows) {
+        const excelRows = dataRows.map((row, index) => {
           let dateStr = String(row[colIndices.date] || getTodayString()).trim();
           dateStr = dateStr.replace(/[\.\/]/g, '-');
           
           const amountStr = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
           const amountNum = parseInt(amountStr, 10) || 0;
 
-          const itemToSave = {
+          return {
+            id: 'excel_' + Date.now() + '_' + index,
             date: dateStr,
             bank: row[colIndices.bank] || '기타',
             purpose: row[colIndices.purpose] || '기타',
             amount: amountNum,
-            createdAt: serverTimestamp()
+            isNew: true // 새로 추가된 항목으로 처리
           };
+        });
 
-          const docRef = await addDoc(collection(db, "payments"), itemToSave);
-          addedList.push({ id: docRef.id, ...itemToSave });
-        }
-
-        setPayments(prev => [...addedList, ...prev]);
+        setPayments(prev => [...excelRows, ...prev]);
+        setSuccessMessage('엑셀 데이터가 성공적으로 로드되었습니다. [저장] 버튼을 누르면 DB에 반영됩니다.');
+        setTimeout(() => setSuccessMessage(''), 4000);
       } catch (err) {
         console.error(err);
         showError('파일을 읽는 중 오류가 발생했습니다. 올바른 엑셀 파일인지 확인해 주세요.');
@@ -192,23 +189,57 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // 5. 테이블 내 실시간 수정 (DB 반영)
-  const handleRowChange = async (id, field, value) => {
-    // 화면 먼저 즉시 반영
+  // 5. [저장] 버튼: 추가된 항목은 DB에 추가, 삭제된 항목은 DB에서 삭제, 수정된 내용은 반영
+  const handleSaveToDatabase = async () => {
+    try {
+      setLoading(true);
+
+      // A. 삭제 대기열에 있는 항목 DB에서 삭제
+      for (const id of deletedIds) {
+        await deleteDoc(doc(db, "payments", id));
+      }
+
+      // B. 현재 화면의 데이터 처리 (신규 추가분 DB 반영 및 기존 데이터 업데이트)
+      for (const payment of payments) {
+        if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
+          // 새로 추가된 항목인 경우 DB에 추가
+          await addDoc(collection(db, "payments"), {
+            date: payment.date,
+            bank: payment.bank,
+            purpose: payment.purpose,
+            amount: Number(payment.amount || 0),
+            createdAt: serverTimestamp()
+          });
+        } else {
+          // 기존 항목인 경우 내용 변경사항 업데이트
+          const docRef = doc(db, "payments", payment.id);
+          await updateDoc(docRef, {
+            date: payment.date,
+            bank: payment.bank,
+            purpose: payment.purpose,
+            amount: Number(payment.amount || 0)
+          });
+        }
+      }
+
+      await fetchPayments();
+      setSuccessMessage('변경사항이 데이터베이스에 성공적으로 저장되었습니다!');
+      setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (error) {
+      console.error("저장 실패:", error);
+      showError('데이터 저장 중 오류가 발생했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRowChange = (id, field, value) => {
     setPayments(prev => prev.map(payment => {
       if (payment.id === id) {
         return { ...payment, [field]: value };
       }
       return payment;
     }));
-
-    // Firestore DB 업데이트
-    try {
-      const docRef = doc(db, "payments", id);
-      await updateDoc(docRef, { [field]: value });
-    } catch (error) {
-      console.error("DB 업데이트 실패:", error);
-    }
   };
 
   const toggleSelection = (id) => {
@@ -239,7 +270,7 @@ export default function App() {
   }, [filteredPayments]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
       
       <input 
         type="file" 
@@ -251,10 +282,10 @@ export default function App() {
 
       {errorModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 text-rose-600 mb-4">
               <AlertCircle size={28} />
-              <h3 className="text-xl font-bold">엑셀 업로드 오류</h3>
+              <h3 className="text-xl font-bold">오류</h3>
             </div>
             <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">
               {errorModal.message}
@@ -271,15 +302,22 @@ export default function App() {
         </div>
       )}
 
+      {/* 상단 알림 메시지 */}
+      {successMessage && (
+        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 font-medium">
+          <span>{successMessage}</span>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-2 text-indigo-600">
+        <div className="flex items-center gap-3 text-indigo-600">
           <Landmark size={28} />
-          <h1 className="text-xl font-bold tracking-tight">주식 포트폴리오 관리 시스템</h1>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">주식 포트폴리오 관리 시스템</h1>
         </div>
         <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-xs">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          Firebase 클라우드 DB 동기화 완료
+          Firebase 클라우드 DB 연동됨
         </div>
       </header>
 
@@ -315,11 +353,11 @@ export default function App() {
         {activeTab === 'payment' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
-            {/* Top Section: Controls & Summary */}
-            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
+            {/* Top Section: Controls & Summary (버튼들 한 줄에 배치) */}
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               
-              {/* Left Controls */}
-              <div className="flex flex-wrap items-center gap-3">
+              {/* Left Controls: 한 줄에 모두 배치되도록 flex-wrap 설정 및 간격 조정 */}
+              <div className="flex flex-wrap items-center gap-2.5">
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Calendar size={16} className="text-slate-400" />
@@ -327,7 +365,7 @@ export default function App() {
                   <input
                     type="text"
                     placeholder="납입연도 (예: 2026)"
-                    className="pl-10 pr-4 py-2 w-48 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
+                    className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                     value={searchYearInput}
                     onChange={(e) => setSearchYearInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -336,23 +374,24 @@ export default function App() {
                 
                 <button 
                   onClick={handleSearch}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
                 >
                   <Search size={16} />
                   조회
                 </button>
-                <div className="w-px h-6 bg-slate-300 mx-1 hidden sm:block"></div>
+
                 <button 
                   onClick={handleAddRow}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
                 >
                   <Plus size={16} />
                   추가
                 </button>
+
                 <button 
                   onClick={handleDeleteRows}
                   disabled={selectedIds.length === 0}
-                  className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
                     ${selectedIds.length > 0 
                       ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' 
                       : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
@@ -361,17 +400,28 @@ export default function App() {
                   <Trash2 size={16} />
                   삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}
                 </button>
+
                 <label 
                   htmlFor="excel-upload-input"
-                  className="flex items-center gap-1.5 px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
                 >
                   <FileSpreadsheet size={16} className="text-green-600" />
                   엑셀 업로드
                 </label>
+
+                {/* 저장 버튼 신설 */}
+                <button 
+                  onClick={handleSaveToDatabase}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm ml-2"
+                >
+                  <Save size={16} />
+                  {loading ? '처리중...' : '저장'}
+                </button>
               </div>
 
               {/* Right Summary */}
-              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm min-w-max w-full lg:w-auto">
+              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm min-w-max w-full xl:w-auto">
                 <div className="flex flex-col">
                   <span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span>
                   <span className="text-lg font-bold text-slate-800 tracking-tight">
@@ -408,7 +458,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {loading ? (
+                  {loading && payments.length === 0 ? (
                     <tr>
                       <td colSpan="5" className="py-16 text-center text-slate-400">데이터를 불러오는 중입니다...</td>
                     </tr>
@@ -431,14 +481,14 @@ export default function App() {
                             type="date" 
                             value={row.date || ''}
                             onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
                           />
                         </td>
                         <td className="py-2 px-4">
                           <select 
                             value={row.bank || '미래에셋'}
                             onChange={(e) => handleRowChange(row.id, 'bank', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
                           >
                             <option value="미래에셋">미래에셋</option>
                             <option value="KB증권">KB증권</option>
@@ -450,7 +500,7 @@ export default function App() {
                           <select 
                             value={row.purpose || '연금'}
                             onChange={(e) => handleRowChange(row.id, 'purpose', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
                           >
                             <option value="연금">연금</option>
                             <option value="IRP">IRP</option>
@@ -469,7 +519,7 @@ export default function App() {
                                 handleRowChange(row.id, 'amount', numValue);
                               }}
                               placeholder="0"
-                              className="w-full md:w-3/4 px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right font-medium focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none"
+                              className="w-full md:w-3/4 px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right font-medium focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
                             />
                           </div>
                         </td>
