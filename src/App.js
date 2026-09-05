@@ -132,12 +132,17 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      // 은행별, 종목코드별 오름차순 정렬
+      // 은행별, 목적별, 종목코드별 오름차순 정렬
       dataList.sort((a, b) => {
         const bankA = (a.bank || '').trim();
         const bankB = (b.bank || '').trim();
         if (bankA !== bankB) {
           return bankA.localeCompare(bankB, 'ko');
+        }
+        const purposeA = (a.purpose || '').trim();
+        const purposeB = (b.purpose || '').trim();
+        if (purposeA !== purposeB) {
+          return purposeA.localeCompare(purposeB, 'ko');
         }
         const codeA = (a.code || '').trim();
         const codeB = (b.code || '').trim();
