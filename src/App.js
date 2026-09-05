@@ -233,47 +233,32 @@ export default function App() {
     }
   };
 
-  const fetchMarketPrice = async (code, currency, baseDate) => {
-    const cleanCode = (code || '').trim();
-    const currUpper = (currency || 'KRW').toUpperCase();
-    if (!cleanCode) return 0;
-
-    try {
-      if (currUpper === 'KRW') {
-        // 네이버 금융 API 연동
-        const res = await fetch(`https://m.stock.naver.com/api/stock/${cleanCode}/integration`);
-        if (res.ok) {
-          const json = await res.json();
-          const closePrice = json?.dealTrendInfos?.[0]?.closePrice || json?.stock?.closePrice || json?.closePrice;
-          if (closePrice) {
-            const parsed = parseFloat(String(closePrice).replace(/[^0-9.]/g, ''));
-            if (!isNaN(parsed) && parsed > 0) return parsed;
-          }
-        }
-      } else {
-        // 야후 파이낸스 공개 API 연동 (기준일자 - 1일 기준)
-        const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${cleanCode}?interval=1d&range=5d`);
-        if (res.ok) {
-          const json = await res.json();
-          const quotes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
-          if (quotes && quotes.length > 0) {
-            const validPrices = quotes.filter(p => p !== null && !isNaN(p));
-            if (validPrices.length > 0) {
-              return validPrices[validPrices.length - 1];
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`시장 시세 API 조회 실패 (${cleanCode}):`, e);
-    }
-    // 외부 API에서 가져오지 못한 경우 임의로 값을 채우지 않고 0을 반환하여 사용자가 수동 입력할 수 있도록 함
-    return 0;
-  };
-
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
+    // 1. 구글시트 단가현황 API 호출
+    let externalPriceMap = new Map();
+    try {
+      const apiUrl = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
+      const res = await fetch(apiUrl);
+      const sheetData = await res.json();
+      console.log("구글시트 단가현황 API 응답:", sheetData);
+      
+      // sheetData가 배열 형태라고 가정하고 종목코드 기준으로 현재단가 매핑
+      if (Array.isArray(sheetData)) {
+        sheetData.forEach(item => {
+          // 키값 (종목코드 또는 code 등 유연하게 대응)
+          const code = String(item.종목코드 || item.code || item.Code || '').trim();
+          const price = Number(item.현재단가 || item.price || item.Price || item.단가 || 0);
+          if (code) {
+            externalPriceMap.set(code, price);
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("구글시트 단가현황 API 호출 실패 (수동 입력 사용):", err);
+    }
+
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -337,12 +322,16 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // 현재단가 산출 (외부 API 호출, 실패 시 0 반환하여 수동 입력 가능하도록 함)
-      let currentPrice = await fetchMarketPrice(code, currency, baseDate);
-      // 기존에 이미 계산된 포트폴리오 데이터가 있다면 수동 입력된 현재단가 유지
-      const existingPf = portfolios.find(p => p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
-      if (existingPf && existingPf.currentPrice > 0 && currentPrice === 0) {
-        currentPrice = existingPf.currentPrice;
+      // 현재단가 산출: 1) 구글시트 API 단가현황 매칭 우선, 2) 기존 저장된 값 유지, 3) 0원
+      let currentPrice = 0;
+      const cleanCode = (code || '').trim();
+      if (externalPriceMap.has(cleanCode)) {
+        currentPrice = externalPriceMap.get(cleanCode);
+      } else {
+        const existingPf = portfolios.find(p => p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
+        if (existingPf && existingPf.currentPrice > 0) {
+          currentPrice = existingPf.currentPrice;
+        }
       }
 
       const purchaseAmount = qty * avgPrice;
@@ -371,7 +360,7 @@ export default function App() {
     }
 
     setPortfolios(newPfList);
-    setSuccessMessage('포트폴리오 계산이 완료되었습니다. [저장] 버튼을 눌러주세요.');
+    setSuccessMessage('포트폴리오 계산 및 구글시트 단가 연동이 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
