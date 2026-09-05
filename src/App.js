@@ -18,9 +18,6 @@ import { signInAnonymously } from 'firebase/auth';
 import { 
   collection, 
   getDocs, 
-  addDoc, 
-  updateDoc,
-  deleteDoc, 
   doc, 
   writeBatch,
   serverTimestamp 
@@ -94,7 +91,6 @@ export default function App() {
       document.head.appendChild(script);
     }
 
-    // Firebase 익명 인증 실행 (권한 거부 에러 원천 방지)
     const initAuthAndFetch = async () => {
       try {
         if (auth) {
@@ -102,7 +98,7 @@ export default function App() {
           console.log("🔥 Firebase 익명 인증 성공");
         }
       } catch (authErr) {
-        console.warn("⚠️ 익명 인증 경고 (이미 인증되었거나 설정 확인 필요):", authErr);
+        console.warn("⚠️ 익명 인증 경고:", authErr);
       }
       fetchPayments();
     };
@@ -238,27 +234,24 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // [저장] 버튼 로직: 무한 로딩 방지 타이머 및 인증 처리 포함
   const handleSaveToDatabase = async () => {
     if (isSaving) return;
     
     setIsSaving(true);
-    console.log("=== 저장 작업 시작 ===");
+    console.log("=== 저장 작업 시작 (Batch 방식) ==/");
 
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. Firebase 보안 규칙(Rules)이나 네트워크 연결을 확인해주세요.")), 15000)
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 30000)
     );
 
     const saveExecution = async () => {
       const batch = writeBatch(db);
 
-      // 1. 삭제 대기열 처리
       for (const id of deletedIds) {
         const docRef = doc(db, "payments", id);
         batch.delete(docRef);
       }
 
-      // 2. 추가 및 수정 처리
       for (const payment of payments) {
         if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
           const newDocRef = doc(collection(db, "payments"));
