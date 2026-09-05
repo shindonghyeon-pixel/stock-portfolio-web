@@ -236,32 +236,23 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. 구글시트 단가현황 API 호출 (오류 수정 및 파싱 강화)
+    // 1. 구글시트 단가현황 API 호출 및 검증 로직
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
-      const res = await fetch(apiUrl, { redirect: 'follow' });
-      const textData = await res.text();
+      console.log("=== 구글 API 호출 시도 ===", apiUrl);
+
+      const res = await fetch(apiUrl);
+      if (!res.ok) throw new Error(`HTTP 통신 에러: ${res.status}`);
       
-      let sheetData = [];
-      try {
-        sheetData = JSON.parse(textData);
-      } catch (parseErr) {
-        console.error("JSON 파싱 에러:", parseErr);
-      }
-
-      // JSON 배열 찾기 (객체로 래핑되어 있을 경우 대비)
-      let targetArray = [];
-      if (Array.isArray(sheetData)) {
-        targetArray = sheetData;
-      } else if (sheetData && typeof sheetData === 'object') {
-        const potentialArrays = Object.values(sheetData).filter(val => Array.isArray(val));
-        if (potentialArrays.length > 0) {
-          targetArray = potentialArrays[0];
-        }
-      }
-
-      // 데이터 키 매핑 로직 강화 (공백 제거 및 키 유연성 확보)
+      const textData = await res.text();
+      console.log("=== 구글 API 원본 텍스트 데이터 ===", textData.substring(0, 200) + "..."); // 앞부분만 출력하여 권한오류(HTML)인지 JSON인지 확인
+      
+      const sheetData = JSON.parse(textData);
+      
+      // JSON 구조 자동 판별
+      let targetArray = Array.isArray(sheetData) ? sheetData : (sheetData.data || Object.values(sheetData).find(Array.isArray) || []);
+      
       targetArray.forEach(item => {
         let matchedCode = '';
         let matchedPrice = 0;
@@ -280,9 +271,15 @@ export default function App() {
           externalPriceMap.set(matchedCode, matchedPrice);
         }
       });
-      console.log("최종 매핑된 단가 목록:", Array.from(externalPriceMap.entries()));
+      console.log("=== 매핑 성공한 단가 데이터 개수 ===", externalPriceMap.size);
     } catch (err) {
-      console.warn("구글시트 단가현황 API 호출 실패 (수동 입력 사용):", err);
+      console.error("=== 구글시트 API 연동 실패 (CORS 또는 파싱 오류) ===", err);
+    }
+
+    // ⭐ [선생님 요청사항] 통신 실패 시 검증용 샘플 데이터 강제 주입
+    if (externalPriceMap.size === 0) {
+      console.warn("⚠️ API에서 정상 데이터를 받지 못해 검증용 샘플 단가(365780)를 임시 적용합니다.");
+      externalPriceMap.set('365780', 82450); 
     }
 
     const d = new Date(baseDate);
@@ -348,7 +345,7 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // 현재단가 산출: 1) 구글시트 API 단가현황 매칭 우선, 2) 기존 저장된 값 유지, 3) 0원
+      // 현재단가 산출: 1) API 및 샘플 데이터, 2) 기존 저장값, 3) 0원
       let currentPrice = 0;
       const cleanCode = (code || '').trim();
       if (externalPriceMap.has(cleanCode)) {
@@ -386,7 +383,7 @@ export default function App() {
     }
 
     setPortfolios(newPfList);
-    setSuccessMessage('포트폴리오 계산 및 구글시트 단가 연동이 완료되었습니다.');
+    setSuccessMessage('포트폴리오 계산이 완료되었습니다. (F12 콘솔창을 확인하세요)');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
