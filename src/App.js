@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Search, 
   Plus, 
@@ -36,7 +36,7 @@ const getTodayString = () => {
 const formatCurrency = (amount, currency = 'KRW') => {
   if (amount === 0 || amount === '' || amount === undefined || isNaN(amount)) return '0';
   const num = Number(amount);
-  if (currency === 'USD') {
+  if ((currency || 'KRW').toUpperCase() === 'USD') {
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
   return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
@@ -119,7 +119,6 @@ export default function App() {
   const fileInputRef = useRef(null);
   const stockFileInputRef = useRef(null);
   const transactionFileInputRef = useRef(null);
-  const portfolioFileInputRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
@@ -152,7 +151,6 @@ export default function App() {
       setDeletedIds([]);
     } catch (error) {
       console.error("납입 데이터 불러오기 실패:", error);
-      showError(`데이터를 불러오지 못했습니다.\n(${error.message})`);
     } finally {
       setLoading(false);
     }
@@ -166,18 +164,13 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      // 은행별, 목적별, 종목코드별 오름차순 정렬
       dataList.sort((a, b) => {
         const bankA = (a.bank || '').trim();
         const bankB = (b.bank || '').trim();
-        if (bankA !== bankB) {
-          return bankA.localeCompare(bankB, 'ko');
-        }
+        if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
         const purposeA = (a.purpose || '').trim();
         const purposeB = (b.purpose || '').trim();
-        if (purposeA !== purposeB) {
-          return purposeA.localeCompare(purposeB, 'ko');
-        }
+        if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
         const codeA = (a.code || '').trim();
         const codeB = (b.code || '').trim();
         return codeA.localeCompare(codeB, 'ko');
@@ -199,23 +192,16 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      // 거래일자 최신순, 은행, 목적, 종목코드 순 정렬
       dataList.sort((a, b) => {
         const dateA = (a.date || '').trim();
         const dateB = (b.date || '').trim();
-        if (dateA !== dateB) {
-          return dateB.localeCompare(dateA);
-        }
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
         const bankA = (a.bank || '').trim();
         const bankB = (b.bank || '').trim();
-        if (bankA !== bankB) {
-          return bankA.localeCompare(bankB, 'ko');
-        }
+        if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
         const purposeA = (a.purpose || '').trim();
         const purposeB = (b.purpose || '').trim();
-        if (purposeA !== purposeB) {
-          return purposeA.localeCompare(purposeB, 'ko');
-        }
+        if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
         const codeA = (a.code || '').trim();
         const codeB = (b.code || '').trim();
         return codeA.localeCompare(codeB, 'ko');
@@ -246,35 +232,15 @@ export default function App() {
     }
   };
 
-  const handleSearch = () => {
-    setAppliedSearchYear(searchYearInput);
-    setSelectedIds([]); 
-  };
-
-  const handleTxSearch = () => {
-    setAppliedTxStartDate(txStartDate);
-    setAppliedTxEndDate(txEndDate);
-    setSelectedTransactionIds([]);
-  };
-
-  const handlePfSearch = () => {
-    setAppliedPfBaseDate(pfBaseDate);
-    setAppliedPfBankFilter(pfBankFilter);
-    setAppliedPfPurposeFilter(pfPurposeFilter);
-    setSelectedPortfolioIds([]);
-  };
-
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. 기준일자 전일 날짜 문자열 계산
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    // 기준일자 전일까지의 모든 거래 내역 집계
     const priorTxs = transactions.filter(t => (t.date || '') <= prevDateStr);
-    const holdingMap = new Map(); // key: bank|purpose|name|code|currency -> { qty, totalCost }
+    const holdingMap = new Map();
 
     priorTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
@@ -293,13 +259,12 @@ export default function App() {
       item.qty = newQty;
     });
 
-    // 당일(기준일자) 거래 내역 집계
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
-    const todayTxMap = new Map(); // key: bank|purpose|name|code|currency -> { buyQty, sellQty, buyAmount, sellQty }
+    const todayTxMap = new Map();
     todayTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
       if (!todayTxMap.has(key)) {
-        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0, sellQty: 0 });
+        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0 });
       }
       const item = todayTxMap.get(key);
       const bQ = Number(t.buyQty || 0);
@@ -328,49 +293,49 @@ export default function App() {
       const buyAmount = todayItem.buyAmount;
 
       const qty = prevQty + buyQty - sellQty;
-      if (qty <= 0) continue; // 수량이 0 이하인 데이터 제외
+      if (qty <= 0) continue;
 
-      // 평균단가 산출 공식: ((전일 평균단가 * 전일 수량) + 당일매수금액) / (전일 수량 + 당일 매수수량)
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // [현재단가 산출 로직 수정 (시장 시세 연동 규칙 적용)]
-      // - 통화가 KRW인 경우: 한국증권거래소(KRX) 기준일자 기준 (오늘 장중 거래가 있으면 장중 단가, 없으면 직전 종가)
-      // - 통화가 USD인 경우: 미국증권거래소 기준 (기준일자 - 1일 기준 장중 단가 또는 종가)
-      let targetPriceDate = baseDate;
-      if (currency === 'USD') {
+      // [현재단가 산출 로직 - 시장 시세 연동 (거래현황과 무관)]
+      // 통화가 KRW인 경우: 한국증권거래소 기준일자 기준 (없을 경우 해당 종목의 직전 단가/평균단가 활용)
+      // 통화가 USD인 경우: 미국증권거래소 기준일자 - 1일 기준
+      let currentPrice = avgPrice;
+      const currUpper = (currency || 'KRW').toUpperCase();
+
+      if (currUpper === 'USD') {
         const bd = new Date(baseDate);
         bd.setDate(bd.getDate() - 1);
-        targetPriceDate = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
-      }
-
-      // 1순위: 당일(또는 목표일) 거래 내역이 존재하면 해당 단가(장중 단가) 사용
-      // 2순위: 당일 거래가 없으면 목표일자 이전(<= targetPriceDate) 중 가장 최근 거래일의 종가 사용
-      const exactMatchTxs = transactions.filter(t => 
-        (t.code || '').trim() === code.trim() &&
-        (t.currency || 'KRW').trim() === currency.trim() &&
-        (t.date || '') === targetPriceDate
-      );
-
-      let currentPrice = avgPrice;
-      if (exactMatchTxs.length > 0) {
-        currentPrice = Number(exactMatchTxs[0].price || avgPrice);
-      } else {
-        const priorMarketTxs = transactions.filter(t => 
+        const usdTargetDate = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
+        
+        // 시장 시세 API가 없는 웹앱 환경이므로, 해당 통화/종목의 기준일자-1일 이하 시장 데이터가 있다면 매칭
+        const marketMatch = transactions.filter(t => 
           (t.code || '').trim() === code.trim() &&
-          (t.currency || 'KRW').trim() === currency.trim() &&
-          (t.date || '') < targetPriceDate
+          (t.currency || 'KRW').trim().toUpperCase() === 'USD' &&
+          (t.date || '') <= usdTargetDate
         ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        if (priorMarketTxs.length > 0) {
-          currentPrice = Number(priorMarketTxs[0].price || avgPrice);
+        if (marketMatch.length > 0) {
+          currentPrice = Number(marketMatch[0].price || avgPrice);
+        }
+      } else {
+        // KRW인 경우: 한국증권거래소 기준일자 기준 (당일 장중단가 또는 종가)
+        const krwMatch = transactions.filter(t => 
+          (t.code || '').trim() === code.trim() &&
+          (t.currency || 'KRW').trim().toUpperCase() === 'KRW' &&
+          (t.date || '') <= baseDate
+        ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        if (krwMatch.length > 0) {
+          currentPrice = Number(krwMatch[0].price || avgPrice);
         }
       }
 
       const purchaseAmount = qty * avgPrice;
       const currentAmount = qty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
-      const sellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0; // 매매손익
+      const sellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0;
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
       newPfList.push({
@@ -398,18 +363,17 @@ export default function App() {
   };
 
   const handleAddRow = () => {
-    const newRow = {
+    setPayments(prev => [{
       id: 'temp_' + Date.now(),
       date: getTodayString(),
       bank: '',
       purpose: '연금',
       amount: 0,
-    };
-    setPayments(prev => [newRow, ...prev]);
+    }, ...prev]);
   };
 
   const handleAddStockRow = () => {
-    const newStockRow = {
+    setStocks(prev => [...prev, {
       id: 'temp_stock_' + Date.now(),
       bank: '미래에셋',
       purpose: '연금',
@@ -418,12 +382,11 @@ export default function App() {
       category: '',
       ratio: 0,
       currency: 'KRW',
-    };
-    setStocks(prev => [...prev, newStockRow]);
+    }]);
   };
 
   const handleAddTransactionRow = () => {
-    const newTxRow = {
+    setTransactions(prev => [{
       id: 'temp_tx_' + Date.now(),
       date: getTodayString(),
       bank: '',
@@ -434,53 +397,43 @@ export default function App() {
       price: 0,
       buyQty: 0,
       sellQty: 0,
-    };
-    setTransactions(prev => [newTxRow, ...prev]);
+    }, ...prev]);
   };
 
   const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
-    const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'));
-    setDeletedIds(prev => [...prev, ...targetRealIds]);
+    setDeletedIds(prev => [...prev, ...selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'))]);
     setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
     setSelectedIds([]);
   };
 
   const handleDeleteStockRows = () => {
     if (selectedStockIds.length === 0) return;
-    const targetRealIds = selectedStockIds.filter(id => !String(id).startsWith('temp_stock_') && !String(id).startsWith('excel_stock_'));
-    setDeletedStockIds(prev => [...prev, ...targetRealIds]);
+    setDeletedStockIds(prev => [...prev, ...selectedStockIds.filter(id => !String(id).startsWith('temp_stock_') && !String(id).startsWith('excel_stock_'))]);
     setStocks(prev => prev.filter(s => !selectedStockIds.includes(s.id)));
     setSelectedStockIds([]);
   };
 
   const handleDeleteTransactionRows = () => {
     if (selectedTransactionIds.length === 0) return;
-    const targetRealIds = selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_') && !String(id).startsWith('excel_tx_'));
-    setDeletedTransactionIds(prev => [...prev, ...targetRealIds]);
+    setDeletedTransactionIds(prev => [...prev, ...selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_') && !String(id).startsWith('excel_tx_'))]);
     setTransactions(prev => prev.filter(t => !selectedTransactionIds.includes(t.id)));
     setSelectedTransactionIds([]);
   };
 
   const handleDeletePortfolioRows = () => {
     if (selectedPortfolioIds.length === 0) return;
-    const targetRealIds = selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_'));
-    setDeletedPortfolioIds(prev => [...prev, ...targetRealIds]);
+    setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_'))]);
     setPortfolios(prev => prev.filter(p => !selectedPortfolioIds.includes(p.id)));
     setSelectedPortfolioIds([]);
   };
 
   const triggerExcelUpload = (type) => {
     setActiveUploadType(type);
-    if (type === 'payment' && fileInputRef.current) {
-      fileInputRef.current.value = "";
-      fileInputRef.current.click();
-    } else if (type === 'stock' && stockFileInputRef.current) {
-      stockFileInputRef.current.value = "";
-      stockFileInputRef.current.click();
-    } else if (type === 'transaction' && transactionFileInputRef.current) {
-      transactionFileInputRef.current.value = "";
-      transactionFileInputRef.current.click();
+    const refMap = { payment: fileInputRef, stock: stockFileInputRef, transaction: transactionFileInputRef };
+    if (refMap[type].current) {
+      refMap[type].current.value = "";
+      refMap[type].current.click();
     }
   };
 
@@ -492,25 +445,12 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
-    const fileExt = file.name.split('.').pop().toLowerCase();
-    if (fileExt !== 'xlsx' && fileExt !== 'xls') {
-      showError('유효한 엑셀 파일(.xlsx, .xls)만 업로드 가능합니다.');
-      return;
-    }
-
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
-
-        if (workbook.SheetNames.length === 0) {
-          showError('엑셀 파일에 시트가 존재하지 않습니다.');
-          return;
-        }
-
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
 
         if (jsonData.length < 2) {
@@ -519,147 +459,53 @@ export default function App() {
         }
 
         const headers = jsonData[0];
+        const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
 
         if (activeUploadType === 'payment') {
-          const requiredColumns = ['납입일자', '은행', '목적', '금액'];
-          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-          
-          if (missingColumns.length > 0) {
-            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '납입일자', '은행', '목적', '금액' 열이 있어야 합니다.)`);
-            return;
-          }
-
-          const colIndices = {
-            date: headers.indexOf('납입일자'),
-            bank: headers.indexOf('은행'),
-            purpose: headers.indexOf('목적'),
-            amount: headers.indexOf('금액'),
-          };
-
-          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
-          
-          const excelRows = dataRows.map((row, index) => {
-            const rawDate = row[colIndices.date];
-            const parsedDate = parseExcelDate(rawDate);
-            const rawAmount = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
-            const amountNum = parseInt(rawAmount, 10) || 0;
-
-            return {
-              id: 'excel_' + Date.now() + '_' + index,
-              date: parsedDate,
-              bank: String(row[colIndices.bank] || '').trim(),
-              purpose: String(row[colIndices.purpose] || '연금').trim(),
-              amount: amountNum,
-            };
-          });
-
+          const excelRows = dataRows.map((row, index) => ({
+            id: 'excel_' + Date.now() + '_' + index,
+            date: parseExcelDate(row[headers.indexOf('납입일자')]),
+            bank: String(row[headers.indexOf('은행')] || '').trim(),
+            purpose: String(row[headers.indexOf('목적')] || '연금').trim(),
+            amount: parseInt(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9]/g, ''), 10) || 0,
+          }));
           setPayments(prev => [...excelRows, ...prev]);
-          setSuccessMessage('납입금액 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         } else if (activeUploadType === 'stock') {
-          const requiredColumns = ['은행', '목적', '종목코드', '종목명', '종목 유형', '유형 비율', '통화'];
-          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-          
-          if (missingColumns.length > 0) {
-            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '은행', '목적', '종목코드', '종목명', '종목 유형', '유형 비율', '통화' 열이 있어야 합니다.)`);
-            return;
-          }
-
-          const colIndices = {
-            bank: headers.indexOf('은행'),
-            purpose: headers.indexOf('목적'),
-            code: headers.indexOf('종목코드'),
-            name: headers.indexOf('종목명'),
-            category: headers.indexOf('종목 유형'),
-            ratio: headers.indexOf('유형 비율'),
-            currency: headers.indexOf('통화'),
-          };
-
-          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
-          
-          const excelRows = dataRows.map((row, index) => {
-            const rawRatio = String(row[colIndices.ratio] || '0').replace(/[^0-9.]/g, '');
-            const ratioNum = parseFloat(rawRatio) || 0;
-            const bankVal = String(row[colIndices.bank] || '').trim();
-            const purposeVal = String(row[colIndices.purpose] || '연금').trim();
-            const validPurpose = ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금';
-
-            return {
-              id: 'excel_stock_' + Date.now() + '_' + index,
-              bank: bankVal,
-              purpose: validPurpose,
-              code: String(row[colIndices.code] || '').trim(),
-              name: String(row[colIndices.name] || '').trim(),
-              category: String(row[colIndices.category] || '').trim(),
-              ratio: ratioNum,
-              currency: String(row[colIndices.currency] || 'KRW').trim(),
-            };
-          });
-
+          const excelRows = dataRows.map((row, index) => ({
+            id: 'excel_stock_' + Date.now() + '_' + index,
+            bank: String(row[headers.indexOf('은행')] || '').trim(),
+            purpose: String(row[headers.indexOf('목적')] || '연금').trim(),
+            code: String(row[headers.indexOf('종목코드')] || '').trim(),
+            name: String(row[headers.indexOf('종목명')] || '').trim(),
+            category: String(row[headers.indexOf('종목 유형')] || '').trim(),
+            ratio: parseFloat(String(row[headers.indexOf('유형 비율')] || '0').replace(/[^0-9.]/g, '')) || 0,
+            currency: String(row[headers.indexOf('통화')] || 'KRW').trim(),
+          }));
           setStocks(prev => [...excelRows, ...prev]);
-          setSuccessMessage('종목 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         } else {
-          // 거래현황 엑셀 업로드 [거래일자, 은행, 목적, 종목명, 단가, 매수수량, 매도수량]
-          const requiredColumns = ['거래일자', '은행', '목적', '종목명', '단가', '매수수량', '매도수량'];
-          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-          
-          if (missingColumns.length > 0) {
-            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '거래일자', '은행', '목적', '종목명', '단가', '매수수량', '매도수량' 열이 있어야 합니다.)`);
-            return;
-          }
-
-          const colIndices = {
-            date: headers.indexOf('거래일자'),
-            bank: headers.indexOf('은행'),
-            purpose: headers.indexOf('목적'),
-            name: headers.indexOf('종목명'),
-            price: headers.indexOf('단가'),
-            buyQty: headers.indexOf('매수수량'),
-            sellQty: headers.indexOf('매도수량'),
-          };
-
-          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
-          
           const excelRows = dataRows.map((row, index) => {
-            const rawDate = row[colIndices.date];
-            const parsedDate = parseExcelDate(rawDate);
-            const bankVal = String(row[colIndices.bank] || '').trim();
-            const purposeVal = String(row[colIndices.purpose] || '연금').trim();
-            const nameVal = String(row[colIndices.name] || '').trim();
-            const rawPrice = String(row[colIndices.price] || '0').replace(/[^0-9.]/g, '');
-            const priceNum = parseFloat(rawPrice) || 0;
-            const buyQtyNum = parseFloat(String(row[colIndices.buyQty] || '0').replace(/[^0-9.]/g, '')) || 0;
-            const sellQtyNum = parseFloat(String(row[colIndices.sellQty] || '0').replace(/[^0-9.]/g, '')) || 0;
-
-            const matchedStock = stocks.find(s => 
-              (s.bank || '').trim() === bankVal &&
-              (s.purpose || '').trim() === purposeVal &&
-              (s.name || '').trim() === nameVal
-            );
-
-            const matchedCode = matchedStock ? matchedStock.code : '';
-            const matchedCurrency = matchedStock ? (matchedStock.currency || 'KRW') : 'KRW';
-
+            const bankVal = String(row[headers.indexOf('은행')] || '').trim();
+            const purposeVal = String(row[headers.indexOf('목적')] || '연금').trim();
+            const nameVal = String(row[headers.indexOf('종목명')] || '').trim();
+            const matchedStock = stocks.find(s => (s.bank || '').trim() === bankVal && (s.purpose || '').trim() === purposeVal && (s.name || '').trim() === nameVal);
             return {
               id: 'excel_tx_' + Date.now() + '_' + index,
-              date: parsedDate,
+              date: parseExcelDate(row[headers.indexOf('거래일자')]),
               bank: bankVal,
-              purpose: ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금',
+              purpose: purposeVal,
               name: nameVal,
-              code: matchedCode,
-              currency: matchedCurrency,
-              price: priceNum,
-              buyQty: buyQtyNum,
-              sellQty: sellQtyNum,
+              code: matchedStock ? matchedStock.code : '',
+              currency: matchedStock ? (matchedStock.currency || 'KRW') : 'KRW',
+              price: parseFloat(String(row[headers.indexOf('단가')] || '0').replace(/[^0-9.]/g, '')) || 0,
+              buyQty: parseFloat(String(row[headers.indexOf('매수수량')] || '0').replace(/[^0-9.]/g, '')) || 0,
+              sellQty: parseFloat(String(row[headers.indexOf('매도수량')] || '0').replace(/[^0-9.]/g, '')) || 0,
             };
           });
-
           setTransactions(prev => [...excelRows, ...prev]);
-          setSuccessMessage('거래현황 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         }
-
-        setTimeout(() => setSuccessMessage(''), 4000);
+        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
+        setTimeout(() => setSuccessMessage(''), 3000);
       } catch (err) {
-        console.error(err);
         showError('엑셀 파일을 읽는 중 오류가 발생했습니다.');
       }
     };
@@ -668,52 +514,22 @@ export default function App() {
 
   const handleSaveToDatabase = async () => {
     if (isSaving) return;
-    
     setIsSaving(true);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
-    );
-
-    const saveExecution = async () => {
-      const batch = writeBatch(db);
-
-      for (const id of deletedIds) {
-        const docRef = doc(db, "payments", id);
-        batch.delete(docRef);
-      }
-
-      for (const payment of payments) {
-        if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
-          const newDocRef = doc(collection(db, "payments"));
-          batch.set(newDocRef, {
-            date: payment.date || getTodayString(),
-            bank: payment.bank || '',
-            purpose: payment.purpose || '연금',
-            amount: Number(payment.amount || 0),
-            createdAt: serverTimestamp()
-          });
-        } else {
-          const docRef = doc(db, "payments", payment.id);
-          batch.update(docRef, {
-            date: payment.date || getTodayString(),
-            bank: payment.bank || '',
-            purpose: payment.purpose || '연금',
-            amount: Number(payment.amount || 0)
-          });
-        }
-      }
-
-      await batch.commit();
-    };
-
     try {
-      await Promise.race([saveExecution(), timeoutPromise]);
+      const batch = writeBatch(db);
+      deletedIds.forEach(id => batch.delete(doc(db, "payments", id)));
+      payments.forEach(p => {
+        const ref = String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_') ? doc(collection(db, "payments")) : doc(db, "payments", p.id);
+        const data = { date: p.date, bank: p.bank, purpose: p.purpose, amount: Number(p.amount || 0) };
+        if (String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
       await fetchPayments();
-      setSuccessMessage('납입금액 데이터가 성공적으로 저장되었습니다!');
+      setSuccessMessage('납입금액 저장 완료!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      console.error("저장 중 에러 발생:", error);
-      showError(`저장 실패: ${error.message}`);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -721,58 +537,22 @@ export default function App() {
 
   const handleSaveStocksToDatabase = async () => {
     if (isSavingStocks) return;
-    
     setIsSavingStocks(true);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
-    );
-
-    const saveExecution = async () => {
-      const batch = writeBatch(db);
-
-      for (const id of deletedStockIds) {
-        const docRef = doc(db, "stocks", id);
-        batch.delete(docRef);
-      }
-
-      for (const stock of stocks) {
-        if (String(stock.id).startsWith('temp_stock_') || String(stock.id).startsWith('excel_stock_')) {
-          const newDocRef = doc(collection(db, "stocks"));
-          batch.set(newDocRef, {
-            bank: stock.bank || '',
-            purpose: stock.purpose || '연금',
-            code: stock.code || '',
-            name: stock.name || '',
-            category: stock.category || '',
-            ratio: Number(stock.ratio || 0),
-            currency: stock.currency || 'KRW',
-            createdAt: serverTimestamp()
-          });
-        } else {
-          const docRef = doc(db, "stocks", stock.id);
-          batch.update(docRef, {
-            bank: stock.bank || '',
-            purpose: stock.purpose || '연금',
-            code: stock.code || '',
-            name: stock.name || '',
-            category: stock.category || '',
-            ratio: Number(stock.ratio || 0),
-            currency: stock.currency || 'KRW'
-          });
-        }
-      }
-
-      await batch.commit();
-    };
-
     try {
-      await Promise.race([saveExecution(), timeoutPromise]);
+      const batch = writeBatch(db);
+      deletedStockIds.forEach(id => batch.delete(doc(db, "stocks", id)));
+      stocks.forEach(s => {
+        const ref = String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_') ? doc(collection(db, "stocks")) : doc(db, "stocks", s.id);
+        const data = { bank: s.bank, purpose: s.purpose, code: s.code, name: s.name, category: s.category, ratio: Number(s.ratio || 0), currency: s.currency || 'KRW' };
+        if (String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
       await fetchStocks();
-      setSuccessMessage('종목 관리 데이터가 성공적으로 저장되었습니다!');
+      setSuccessMessage('종목 관리 저장 완료!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      console.error("종목 저장 중 에러 발생:", error);
-      showError(`저장 실패: ${error.message}`);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
     } finally {
       setIsSavingStocks(false);
     }
@@ -780,62 +560,22 @@ export default function App() {
 
   const handleSaveTransactionsToDatabase = async () => {
     if (isSavingTransactions) return;
-    
     setIsSavingTransactions(true);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
-    );
-
-    const saveExecution = async () => {
-      const batch = writeBatch(db);
-
-      for (const id of deletedTransactionIds) {
-        const docRef = doc(db, "transactions", id);
-        batch.delete(docRef);
-      }
-
-      for (const tx of transactions) {
-        if (String(tx.id).startsWith('temp_tx_') || String(tx.id).startsWith('excel_tx_')) {
-          const newDocRef = doc(collection(db, "transactions"));
-          batch.set(newDocRef, {
-            date: tx.date || getTodayString(),
-            bank: tx.bank || '',
-            purpose: tx.purpose || '연금',
-            name: tx.name || '',
-            code: tx.code || '',
-            currency: tx.currency || 'KRW',
-            price: Number(tx.price || 0),
-            buyQty: Number(tx.buyQty || 0),
-            sellQty: Number(tx.sellQty || 0),
-            createdAt: serverTimestamp()
-          });
-        } else {
-          const docRef = doc(db, "transactions", tx.id);
-          batch.update(docRef, {
-            date: tx.date || getTodayString(),
-            bank: tx.bank || '',
-            purpose: tx.purpose || '연금',
-            name: tx.name || '',
-            code: tx.code || '',
-            currency: tx.currency || 'KRW',
-            price: Number(tx.price || 0),
-            buyQty: Number(tx.buyQty || 0),
-            sellQty: Number(tx.sellQty || 0)
-          });
-        }
-      }
-
-      await batch.commit();
-    };
-
     try {
-      await Promise.race([saveExecution(), timeoutPromise]);
+      const batch = writeBatch(db);
+      deletedTransactionIds.forEach(id => batch.delete(doc(db, "transactions", id)));
+      transactions.forEach(t => {
+        const ref = String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_') ? doc(collection(db, "transactions")) : doc(db, "transactions", t.id);
+        const data = { date: t.date, bank: t.bank, purpose: t.purpose, name: t.name, code: t.code, currency: t.currency || 'KRW', price: Number(t.price || 0), buyQty: Number(t.buyQty || 0), sellQty: Number(t.sellQty || 0) };
+        if (String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
       await fetchTransactions();
-      setSuccessMessage('거래현황 데이터가 성공적으로 저장되었습니다!');
+      setSuccessMessage('거래현황 저장 완료!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      console.error("거래현황 저장 중 에러 발생:", error);
-      showError(`저장 실패: ${error.message}`);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
     } finally {
       setIsSavingTransactions(false);
     }
@@ -843,590 +583,149 @@ export default function App() {
 
   const handleSavePortfoliosToDatabase = async () => {
     if (isSavingPortfolios) return;
-    
     setIsSavingPortfolios(true);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
-    );
-
-    const saveExecution = async () => {
-      const batch = writeBatch(db);
-
-      for (const id of deletedPortfolioIds) {
-        const docRef = doc(db, "portfolios", id);
-        batch.delete(docRef);
-      }
-
-      for (const pf of portfolios) {
-        if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_')) {
-          const newDocRef = doc(collection(db, "portfolios"));
-          batch.set(newDocRef, {
-            baseDate: pf.baseDate || getTodayString(),
-            bank: pf.bank || '',
-            purpose: pf.purpose || '',
-            name: pf.name || '',
-            code: pf.code || '',
-            currency: pf.currency || 'KRW',
-            avgPrice: Number(pf.avgPrice || 0),
-            currentPrice: Number(pf.currentPrice || 0),
-            qty: Number(pf.qty || 0),
-            purchaseAmount: Number(pf.purchaseAmount || 0),
-            currentAmount: Number(pf.currentAmount || 0),
-            evalProfitLoss: Number(pf.evalProfitLoss || 0),
-            sellProfitLoss: Number(pf.sellProfitLoss || 0),
-            profitRate: Number(pf.profitRate || 0),
-            createdAt: serverTimestamp()
-          });
-        } else {
-          const docRef = doc(db, "portfolios", pf.id);
-          batch.update(docRef, {
-            baseDate: pf.baseDate || getTodayString(),
-            bank: pf.bank || '',
-            purpose: pf.purpose || '',
-            name: pf.name || '',
-            code: pf.code || '',
-            currency: pf.currency || 'KRW',
-            avgPrice: Number(pf.avgPrice || 0),
-            currentPrice: Number(pf.currentPrice || 0),
-            qty: Number(pf.qty || 0),
-            purchaseAmount: Number(pf.purchaseAmount || 0),
-            currentAmount: Number(pf.currentAmount || 0),
-            evalProfitLoss: Number(pf.evalProfitLoss || 0),
-            sellProfitLoss: Number(pf.sellProfitLoss || 0),
-            profitRate: Number(pf.profitRate || 0)
-          });
-        }
-      }
-
-      await batch.commit();
-    };
-
     try {
-      await Promise.race([saveExecution(), timeoutPromise]);
+      const batch = writeBatch(db);
+      deletedPortfolioIds.forEach(id => batch.delete(doc(db, "portfolios", id)));
+      portfolios.forEach(pf => {
+        const ref = String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') ? doc(collection(db, "portfolios")) : doc(db, "portfolios", pf.id);
+        const data = { baseDate: pf.baseDate, bank: pf.bank, purpose: pf.purpose, name: pf.name, code: pf.code, currency: pf.currency || 'KRW', avgPrice: pf.avgPrice, currentPrice: pf.currentPrice, qty: pf.qty, purchaseAmount: pf.purchaseAmount, currentAmount: pf.currentAmount, evalProfitLoss: pf.evalProfitLoss, sellProfitLoss: pf.sellProfitLoss, profitRate: pf.profitRate };
+        if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
       await fetchPortfolios();
-      setSuccessMessage('포트폴리오 현황 데이터가 성공적으로 저장되었습니다!');
+      setSuccessMessage('포트폴리오 저장 완료!');
       setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (error) {
-      console.error("포트폴리오 저장 중 에러 발생:", error);
-      showError(`저장 실패: ${error.message}`);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
     } finally {
       setIsSavingPortfolios(false);
     }
   };
 
-  const handleRowChange = (id, field, value) => {
-    setPayments(prev => prev.map(payment => {
-      if (payment.id === id) {
-        return { ...payment, [field]: value };
-      }
-      return payment;
-    }));
-  };
-
-  const handleStockRowChange = (id, field, value) => {
-    setStocks(prev => prev.map(stock => {
-      if (stock.id === id) {
-        return { ...stock, [field]: value };
-      }
-      return stock;
-    }));
-  };
-
-  const handleTransactionRowChange = (id, field, value) => {
-    setTransactions(prev => prev.map(tx => {
-      if (tx.id === id) {
-        const updated = { ...tx, [field]: value };
+  const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
+  const handleStockRowChange = (id, field, val) => setStocks(prev => prev.map(s => s.id === id ? { ...s, [field]: val } : s));
+  
+  const handleTransactionRowChange = (id, field, val) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === id) {
+        const updated = { ...t, [field]: val };
         if (field === 'bank' || field === 'purpose' || field === 'name') {
-          const targetBank = field === 'bank' ? value : updated.bank;
-          const targetPurpose = field === 'purpose' ? value : updated.purpose;
-          const targetName = field === 'name' ? value : updated.name;
-
-          const matchedStock = stocks.find(s => {
-            const bMatch = (s.bank || '').trim() === (targetBank || '').trim();
-            const pMatch = (s.purpose || '').trim() === (targetPurpose || '').trim();
-            const nameMatch = targetName ? (s.name || '').trim() === (targetName || '').trim() : true;
-            return bMatch && pMatch && nameMatch;
-          });
-
-          if (matchedStock) {
-            updated.code = matchedStock.code || '';
-            updated.name = matchedStock.name || updated.name;
-            updated.currency = matchedStock.currency || 'KRW';
+          const matched = stocks.find(s => 
+            (s.bank || '').trim() === (field === 'bank' ? val : updated.bank).trim() &&
+            (s.purpose || '').trim() === (field === 'purpose' ? val : updated.purpose).trim() &&
+            ((field === 'name' ? val : updated.name) ? (s.name || '').trim() === (field === 'name' ? val : updated.name).trim() : true)
+          );
+          if (matched) {
+            updated.code = matched.code || '';
+            updated.name = matched.name || updated.name;
+            updated.currency = matched.currency || 'KRW';
           }
         }
         return updated;
       }
-      return tx;
+      return t;
     }));
   };
 
-  const toggleSelection = (id) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const toggleStockSelection = (id) => {
-    setSelectedStockIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const toggleTransactionSelection = (id) => {
-    setSelectedTransactionIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const togglePortfolioSelection = (id) => {
-    setSelectedPortfolioIds(prev => 
-      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
-    );
-  };
-
-  const filteredPayments = useMemo(() => {
-    if (!appliedSearchYear) return payments;
-    return payments.filter(payment => payment.date && payment.date.startsWith(appliedSearchYear));
-  }, [payments, appliedSearchYear]);
-
+  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   const filteredTransactions = useMemo(() => {
-    let list = transactions.filter(tx => {
-      if (!tx.date) return true;
-      if (appliedTxStartDate && tx.date < appliedTxStartDate) return false;
-      if (appliedTxEndDate && tx.date > appliedTxEndDate) return false;
+    return transactions.filter(t => {
+      if (!t.date) return true;
+      if (appliedTxStartDate && t.date < appliedTxStartDate) return false;
+      if (appliedTxEndDate && t.date > appliedTxEndDate) return false;
       return true;
+    }).sort((a, b) => {
+      if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
+      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      return (a.code || '').localeCompare(b.code || '', 'ko');
     });
-
-    // 정렬 순서: 거래일자 최신순, 은행, 목적, 종목코드 순
-    list.sort((a, b) => {
-      const dateA = (a.date || '').trim();
-      const dateB = (b.date || '').trim();
-      if (dateA !== dateB) {
-        return dateB.localeCompare(dateA); 
-      }
-      const bankA = (a.bank || '').trim();
-      const bankB = (b.bank || '').trim();
-      if (bankA !== bankB) {
-        return bankA.localeCompare(bankB, 'ko');
-      }
-      const purposeA = (a.purpose || '').trim();
-      const purposeB = (b.purpose || '').trim();
-      if (purposeA !== purposeB) {
-        return purposeA.localeCompare(purposeB, 'ko');
-      }
-      const codeA = (a.code || '').trim();
-      const codeB = (b.code || '').trim();
-      return codeA.localeCompare(codeB, 'ko');
-    });
-
-    return list;
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
 
-  const filteredPortfolios = useMemo(() => {
-    return portfolios.filter(pf => {
-      if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
-      if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
-      if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
-      return true;
-    });
-  }, [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
+  const filteredPortfolios = useMemo(() => portfolios.filter(pf => {
+    if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
+    if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
+    if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
+    return true;
+  }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
-  const handleSelectAll = (e) => {
-    if (e.target.checked) {
-      setSelectedIds(filteredPayments.map(p => p.id));
-    } else {
-      setSelectedIds([]);
-    }
-  };
+  const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+  const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
 
-  const handleSelectAllStocks = (e) => {
-    if (e.target.checked) {
-      setSelectedStockIds(stocks.map(s => s.id));
-    } else {
-      setSelectedStockIds([]);
-    }
-  };
-
-  const handleSelectAllTransactions = (e) => {
-    if (e.target.checked) {
-      setSelectedTransactionIds(filteredTransactions.map(t => t.id));
-    } else {
-      setSelectedTransactionIds([]);
-    }
-  };
-
-  const handleSelectAllPortfolios = (e) => {
-    if (e.target.checked) {
-      setSelectedPortfolioIds(filteredPortfolios.map(p => p.id));
-    } else {
-      setSelectedPortfolioIds([]);
-    }
-  };
-
-  const totalAmount = useMemo(() => {
-    return payments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
-  }, [payments]);
-
-  const filteredTotalAmount = useMemo(() => {
-    return filteredPayments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
-  }, [filteredPayments]);
-
-  const portfolioSummary = useMemo(() => {
-    let currentTotal = 0;
-    let evalProfitLossTotal = 0;
-    let sellProfitLossTotal = 0;
-
-    filteredPortfolios.forEach(pf => {
-      currentTotal += Number(pf.currentAmount || 0);
-      evalProfitLossTotal += Number(pf.evalProfitLoss || 0);
-      sellProfitLossTotal += Number(pf.sellProfitLoss || 0);
-    });
-
-    return { currentTotal, evalProfitLossTotal, sellProfitLossTotal };
-  }, [filteredPortfolios]);
-
-  const availableBanks = useMemo(() => {
-    const set = new Set();
-    stocks.forEach(s => {
-      if (s.bank && s.bank.trim()) set.add(s.bank.trim());
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
-  }, [stocks]);
-
-  const availablePurposes = useMemo(() => {
-    const set = new Set();
-    stocks.forEach(s => {
-      if (s.purpose && s.purpose.trim()) set.add(s.purpose.trim());
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
-  }, [stocks]);
-
-  const getAvailableStockNames = (bank, purpose) => {
-    const set = new Set();
-    stocks.forEach(s => {
-      if (
-        (s.bank || '').trim() === (bank || '').trim() &&
-        (s.purpose || '').trim() === (purpose || '').trim() &&
-        s.name && s.name.trim()
-      ) {
-        set.add(s.name.trim());
-      }
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
-  };
-
-  if (!isTailwindLoaded) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'sans-serif', color: '#64748b' }}>
-        화면을 준비 중입니다...
-      </div>
-    );
-  }
+  if (!isTailwindLoaded) return <div className="flex justify-center items-center h-screen text-slate-500 font-sans">준비 중...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
-      
-      <input 
-        type="file" 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-      />
-
-      <input 
-        type="file" 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-        ref={stockFileInputRef} 
-        onChange={handleFileChange} 
-      />
-
-      <input 
-        type="file" 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-        ref={transactionFileInputRef} 
-        onChange={handleFileChange} 
-      />
-
-      <input 
-        type="file" 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-        ref={portfolioFileInputRef} 
-        onChange={handleFileChange} 
-      />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={stockFileInputRef} onChange={handleFileChange} />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={transactionFileInputRef} onChange={handleFileChange} />
 
       {errorModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-            <div className="flex items-center gap-3 text-rose-600 mb-4">
-              <AlertCircle size={28} />
-              <h3 className="text-xl font-bold">오류 안내</h3>
-            </div>
-            <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">
-              {errorModal.message}
-            </div>
-            <div className="flex justify-end">
-              <button 
-                onClick={() => setErrorModal({ isOpen: false, message: '' })}
-                className="px-6 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700 transition-colors"
-              >
-                확인
-              </button>
-            </div>
+            <div className="flex items-center gap-3 text-rose-600 mb-4"><AlertCircle size={28} /><h3 className="text-xl font-bold">오류 안내</h3></div>
+            <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">{errorModal.message}</div>
+            <div className="flex justify-end"><button onClick={() => setErrorModal({ isOpen: false, message: '' })} className="px-6 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700">확인</button></div>
           </div>
         </div>
       )}
 
-      {successMessage && (
-        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 font-medium transition-all">
-          <span>{successMessage}</span>
-        </div>
-      )}
+      {successMessage && <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg font-medium">{successMessage}</div>}
 
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between shadow-sm gap-4">
-        <div className="flex items-center gap-3 text-indigo-600">
-          <Landmark size={28} />
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">주식 포트폴리오 관리 시스템</h1>
-        </div>
-        <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-xs">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          Firebase 클라우드 연동 완료
-        </div>
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3 text-indigo-600"><Landmark size={28} /><h1 className="text-xl font-bold text-slate-900">주식 포트폴리오 관리 시스템</h1></div>
+        <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>Firebase 클라우드 연동 완료</div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        
-        {/* Tab Navigation */}
         <div className="flex space-x-1 border-b border-slate-200 mb-6 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('payment')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200 whitespace-nowrap
-              ${activeTab === 'payment' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-              }`}
-          >
-            <Wallet size={18} />
-            납입금액 관리
-          </button>
-          <button
-            onClick={() => setActiveTab('stock')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200 whitespace-nowrap
-              ${activeTab === 'stock' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-              }`}
-          >
-            <Layers size={18} />
-            종목 관리
-          </button>
-          <button
-            onClick={() => setActiveTab('transaction')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200 whitespace-nowrap
-              ${activeTab === 'transaction' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-              }`}
-          >
-            <ArrowLeftRight size={18} />
-            거래현황
-          </button>
-          <button
-            onClick={() => setActiveTab('portfolio')}
-            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200 whitespace-nowrap
-              ${activeTab === 'portfolio' 
-                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
-                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-              }`}
-          >
-            <PiggyBank size={18} />
-            포트폴리오 현황
-          </button>
+          <button onClick={() => setActiveTab('payment')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'payment' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Wallet size={18} />납입금액 관리</button>
+          <button onClick={() => setActiveTab('stock')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'stock' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Layers size={18} />종목 관리</button>
+          <button onClick={() => setActiveTab('transaction')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'transaction' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><ArrowLeftRight size={18} />거래현황</button>
+          <button onClick={() => setActiveTab('portfolio')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'portfolio' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><PiggyBank size={18} />포트폴리오 현황</button>
         </div>
 
         {/* 1. 납입금액 관리 탭 */}
         {activeTab === 'payment' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-            
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
-              
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Calendar size={16} className="text-slate-400" />
-                  </div>
-                  <input
-                    type="text"
-                    placeholder="납입연도 (예: 2026)"
-                    className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-900"
-                    value={searchYearInput}
-                    onChange={(e) => setSearchYearInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                  />
-                </div>
-                
-                <button 
-                  onClick={handleSearch}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                  <Search size={16} />
-                  조회
-                </button>
-
-                <button 
-                  onClick={handleAddRow}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
-                >
-                  <Plus size={16} />
-                  추가
-                </button>
-
-                <button 
-                  onClick={handleDeleteRows}
-                  disabled={selectedIds.length === 0}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
-                    ${selectedIds.length > 0 
-                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
-                      : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                    }`}
-                >
-                  <Trash2 size={16} />
-                  삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}
-                </button>
-
-                <button 
-                  onClick={() => triggerExcelUpload('payment')}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <FileSpreadsheet size={16} className="text-green-600" />
-                  엑셀 업로드
-                </button>
-
-                <button 
-                  onClick={handleSaveToDatabase}
-                  disabled={isSaving}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
-                    ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  <Save size={16} />
-                  {isSaving ? '저장 중...' : '저장'}
-                </button>
+                <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
+                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteRows} disabled={selectedIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedIds.length > 0 ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('payment')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveToDatabase} disabled={isSaving} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSaving ? '저장 중...' : '저장'}</button>
               </div>
-
-              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm min-w-max w-full xl:w-auto">
-                <div className="flex flex-col">
-                  <span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span>
-                  <span className="text-lg font-bold text-slate-800 tracking-tight">
-                    {formatCurrency(totalAmount)}<span className="text-sm font-normal text-slate-500 ml-1">원</span>
-                  </span>
-                </div>
+              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto">
+                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-lg font-bold text-slate-800">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
-                <div className="flex flex-col">
-                  <span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span>
-                  <span className="text-lg font-bold text-indigo-700 tracking-tight">
-                    {formatCurrency(filteredTotalAmount)}<span className="text-sm font-normal text-indigo-500 ml-1">원</span>
-                  </span>
-                </div>
+                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-lg font-bold text-indigo-700">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
               </div>
             </div>
-
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
-                      <input 
-                        type="checkbox" 
-                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                        checked={filteredPayments.length > 0 && selectedIds.length === filteredPayments.length}
-                        onChange={handleSelectAll}
-                      />
-                    </th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-48">납입일자</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-48">은행</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-48">목적</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm text-right">금액 (원)</th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPayments.length > 0 && selectedIds.length === filteredPayments.length} onChange={e => setSelectedIds(e.target.checked ? filteredPayments.map(p => p.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">납입일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">금액 (원)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {loading && payments.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" className="py-16 text-center text-slate-400">데이터를 불러오는 중입니다...</td>
+                  {filteredPayments.length > 0 ? filteredPayments.map(row => (
+                    <tr key={row.id} className={`hover:bg-slate-50 ${selectedIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedIds.includes(row.id)} onChange={() => setSelectedIds(prev => prev.includes(row.id) ? prev.filter(i => i !== row.id) : [...prev, row.id])} /></td>
+                      <td className="py-2 px-4"><input type="date" value={row.date || ''} onChange={e => handleRowChange(row.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={row.bank || ''} onChange={e => handleRowChange(row.id, 'bank', e.target.value)} placeholder="은행 입력" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><select value={row.purpose || '연금'} onChange={e => handleRowChange(row.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                      <td className="py-2 px-4 text-right"><input type="text" value={row.amount === 0 ? '' : formatCurrency(row.amount)} onChange={e => handleRowChange(row.id, 'amount', parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0)} placeholder="0" className="w-full md:w-3/4 px-3 py-1.5 border rounded-md text-sm text-right font-medium bg-white" /></td>
                     </tr>
-                  ) : filteredPayments.length > 0 ? (
-                    filteredPayments.map((row) => (
-                      <tr 
-                        key={row.id} 
-                        className={`hover:bg-slate-50 transition-colors ${selectedIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}
-                      >
-                        <td className="py-3 px-4 w-12">
-                          <input 
-                            type="checkbox" 
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                            checked={selectedIds.includes(row.id)}
-                            onChange={() => toggleSelection(row.id)}
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="date" 
-                            value={row.date || ''}
-                            onChange={(e) => handleRowChange(row.id, 'date', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="text" 
-                            value={row.bank || ''}
-                            onChange={(e) => handleRowChange(row.id, 'bank', e.target.value)}
-                            placeholder="은행 입력"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <select 
-                            value={row.purpose || '연금'}
-                            onChange={(e) => handleRowChange(row.id, 'purpose', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          >
-                            <option value="연금">연금</option>
-                            <option value="IRP">IRP</option>
-                            <option value="DC">DC</option>
-                            <option value="기타">기타</option>
-                          </select>
-                        </td>
-                        <td className="py-2 px-4">
-                          <div className="relative flex items-center justify-end">
-                            <input 
-                              type="text" 
-                              value={row.amount === 0 ? '' : formatCurrency(row.amount)}
-                              onChange={(e) => {
-                                const rawValue = e.target.value.replace(/[^0-9]/g, '');
-                                const numValue = parseInt(rawValue, 10) || 0;
-                                handleRowChange(row.id, 'amount', numValue);
-                              }}
-                              placeholder="0"
-                              className="w-full md:w-3/4 px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right font-medium focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="5" className="py-16 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <CheckSquare size={32} className="text-slate-300" />
-                          <p>조회된 납입 내역이 없습니다.</p>
-                          <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                  )) : <tr><td colSpan="5" className="py-16 text-center text-slate-500">조회된 납입 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1436,186 +735,43 @@ export default function App() {
         {/* 2. 종목 관리 탭 */}
         {activeTab === 'stock' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-            
-            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
-              
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <button 
-                  onClick={fetchStocks}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                  <Search size={16} />
-                  조회
-                </button>
-
-                <button 
-                  onClick={handleAddStockRow}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
-                >
-                  <Plus size={16} />
-                  추가
-                </button>
-
-                <button 
-                  onClick={handleDeleteStockRows}
-                  disabled={selectedStockIds.length === 0}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
-                    ${selectedStockIds.length > 0 
-                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
-                      : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                    }`}
-                >
-                  <Trash2 size={16} />
-                  삭제 {selectedStockIds.length > 0 && `(${selectedStockIds.length})`}
-                </button>
-
-                <button 
-                  onClick={() => triggerExcelUpload('stock')}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <FileSpreadsheet size={16} className="text-green-600" />
-                  엑셀 업로드
-                </button>
-
-                <button 
-                  onClick={handleSaveStocksToDatabase}
-                  disabled={isSavingStocks}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
-                    ${isSavingStocks ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  <Save size={16} />
-                  {isSavingStocks ? '저장 중...' : '저장'}
-                </button>
+                <button onClick={fetchStocks} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddStockRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteStockRows} disabled={selectedStockIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedStockIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedStockIds.length > 0 && `(${selectedStockIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('stock')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveStocksToDatabase} disabled={isSavingStocks} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingStocks ? '저장 중...' : '저장'}</button>
               </div>
-
-              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-medium">등록된 종목 수:</span>
-                <span className="text-base font-bold text-slate-800">{stocks.length} 개</span>
-              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">등록된 종목 수:</span><span className="text-base font-bold text-slate-800">{stocks.length} 개</span></div>
             </div>
-
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[1000px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
-                      <input 
-                        type="checkbox" 
-                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                        checked={stocks.length > 0 && selectedStockIds.length === stocks.length}
-                        onChange={handleSelectAllStocks}
-                      />
-                    </th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-44">은행</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-44">목적</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">종목코드</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-40">종목 유형</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">유형 비율 (%)</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-center">통화</th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={stocks.length > 0 && selectedStockIds.length === stocks.length} onChange={e => setSelectedStockIds(e.target.checked ? stocks.map(s => s.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">종목코드</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">종목 유형</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">유형 비율 (%)</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-center">통화</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {loadingStocks && stocks.length === 0 ? (
-                    <tr>
-                      <td colSpan="8" className="py-16 text-center text-slate-400">종목 데이터를 불러오는 중입니다...</td>
+                  {stocks.length > 0 ? stocks.map(stock => (
+                    <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
+                      <td className="py-2 px-4"><select value={stock.bank || ''} onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option><option value="미래에셋">미래에셋</option><option value="KB증권">KB증권</option><option value="삼성증권">삼성증권</option></select></td>
+                      <td className="py-2 px-4"><select value={stock.purpose || '연금'} onChange={e => handleStockRowChange(stock.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.code || ''} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.name || ''} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4"><input type="text" value={stock.category || ''} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                      <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                      <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
                     </tr>
-                  ) : stocks.length > 0 ? (
-                    stocks.map((stock) => (
-                      <tr 
-                        key={stock.id} 
-                        className={`hover:bg-slate-50 transition-colors ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}
-                      >
-                        <td className="py-3 px-4 w-12">
-                          <input 
-                            type="checkbox" 
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                            checked={selectedStockIds.includes(stock.id)}
-                            onChange={() => toggleStockSelection(stock.id)}
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <select 
-                            value={stock.bank || ''}
-                            onChange={(e) => handleStockRowChange(stock.id, 'bank', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          >
-                            <option value="">은행 선택</option>
-                            <option value="미래에셋">미래에셋</option>
-                            <option value="KB증권">KB증권</option>
-                            <option value="삼성증권">삼성증권</option>
-                          </select>
-                        </td>
-                        <td className="py-2 px-4">
-                          <select 
-                            value={stock.purpose || '연금'}
-                            onChange={(e) => handleStockRowChange(stock.id, 'purpose', e.target.value)}
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          >
-                            <option value="연금">연금</option>
-                            <option value="IRP">IRP</option>
-                            <option value="DC">DC</option>
-                            <option value="기타">기타</option>
-                          </select>
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="text" 
-                            value={stock.code || ''}
-                            onChange={(e) => handleStockRowChange(stock.id, 'code', e.target.value)}
-                            placeholder="종목코드"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="text" 
-                            value={stock.name || ''}
-                            onChange={(e) => handleStockRowChange(stock.id, 'name', e.target.value)}
-                            placeholder="종목명"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="text" 
-                            value={stock.category || ''}
-                            onChange={(e) => handleStockRowChange(stock.id, 'category', e.target.value)}
-                            placeholder="종목 유형"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="number" 
-                            value={stock.ratio || 0}
-                            onChange={(e) => handleStockRowChange(stock.id, 'ratio', e.target.value)}
-                            placeholder="0"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                        <td className="py-2 px-4">
-                          <input 
-                            type="text" 
-                            value={stock.currency || 'KRW'}
-                            onChange={(e) => handleStockRowChange(stock.id, 'currency', e.target.value)}
-                            placeholder="KRW"
-                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          />
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="8" className="py-16 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <CheckSquare size={32} className="text-slate-300" />
-                          <p>등록된 종목 내역이 없습니다.</p>
-                          <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                  )) : <tr><td colSpan="8" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1625,232 +781,51 @@ export default function App() {
         {/* 3. 거래현황 탭 */}
         {activeTab === 'transaction' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-            
-            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
-              
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5 shadow-xs">
-                  <Calendar size={16} className="text-slate-400" />
-                  <input
-                    type="date"
-                    value={txStartDate}
-                    onChange={(e) => setTxStartDate(e.target.value)}
-                    className="text-sm outline-none bg-transparent text-slate-900"
-                  />
-                  <span className="text-slate-400">~</span>
-                  <input
-                    type="date"
-                    value={txEndDate}
-                    onChange={(e) => setTxEndDate(e.target.value)}
-                    className="text-sm outline-none bg-transparent text-slate-900"
-                  />
-                </div>
-                
-                <button 
-                  onClick={handleTxSearch}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                  <Search size={16} />
-                  조회
-                </button>
-
-                <button 
-                  onClick={handleAddTransactionRow}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
-                >
-                  <Plus size={16} />
-                  추가
-                </button>
-
-                <button 
-                  onClick={handleDeleteTransactionRows}
-                  disabled={selectedTransactionIds.length === 0}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
-                    ${selectedTransactionIds.length > 0 
-                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
-                      : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                    }`}
-                >
-                  <Trash2 size={16} />
-                  삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}
-                </button>
-
-                <button 
-                  onClick={() => triggerExcelUpload('transaction')}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
-                >
-                  <FileSpreadsheet size={16} className="text-green-600" />
-                  엑셀 업로드
-                </button>
-
-                <button 
-                  onClick={handleSaveTransactionsToDatabase}
-                  disabled={isSavingTransactions}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
-                    ${isSavingTransactions ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  <Save size={16} />
-                  {isSavingTransactions ? '저장 중...' : '저장'}
-                </button>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><Calendar size={16} className="text-slate-400" /><input type="date" value={txStartDate} onChange={e => setTxStartDate(e.target.value)} className="text-sm outline-none bg-transparent" /><span className="text-slate-400">~</span><input type="date" value={txEndDate} onChange={e => setTxEndDate(e.target.value)} className="text-sm outline-none bg-transparent" /></div>
+                <button onClick={() => { setAppliedTxStartDate(txStartDate); setAppliedTxEndDate(txEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddTransactionRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteTransactionRows} disabled={selectedTransactionIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTransactionIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}</button>
+                <button onClick={() => triggerExcelUpload('transaction')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveTransactionsToDatabase} disabled={isSavingTransactions} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingTransactions ? '저장 중...' : '저장'}</button>
               </div>
-
-              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm">
-                <span className="text-xs text-slate-500 font-medium">조회 건수:</span>
-                <span className="text-base font-bold text-slate-800">{filteredTransactions.length} 건</span>
-              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredTransactions.length} 건</span></div>
             </div>
-
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[1100px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
-                      <input 
-                        type="checkbox" 
-                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                        checked={filteredTransactions.length > 0 && selectedTransactionIds.length === filteredTransactions.length}
-                        onChange={handleSelectAllTransactions}
-                      />
-                    </th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-40">거래일자</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">은행</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32">목적</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32">종목코드</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32 text-right">단가</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매수수량</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매도수량</th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredTransactions.length > 0 && selectedTransactionIds.length === filteredTransactions.length} onChange={e => setSelectedTransactionIds(e.target.checked ? filteredTransactions.map(t => t.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">거래일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">종목코드</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">매수수량</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">매도수량</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {loadingTransactions && transactions.length === 0 ? (
-                    <tr>
-                      <td colSpan="10" className="py-16 text-center text-slate-400">거래현황 데이터를 불러오는 중입니다...</td>
-                    </tr>
-                  ) : filteredTransactions.length > 0 ? (
-                    filteredTransactions.map((tx) => {
-                      const rowAvailableNames = getAvailableStockNames(tx.bank, tx.purpose);
-                      return (
-                        <tr 
-                          key={tx.id} 
-                          className={`hover:bg-slate-50 transition-colors ${selectedTransactionIds.includes(tx.id) ? 'bg-indigo-50/30' : ''}`}
-                        >
-                          <td className="py-3 px-4 w-12">
-                            <input 
-                              type="checkbox" 
-                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                              checked={selectedTransactionIds.includes(tx.id)}
-                              onChange={() => toggleTransactionSelection(tx.id)}
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="date" 
-                              value={tx.date || getTodayString()}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'date', e.target.value)}
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <select 
-                              value={tx.bank || ''}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'bank', e.target.value)}
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            >
-                              <option value="">은행 선택</option>
-                              {availableBanks.map(b => (
-                                <option key={b} value={b}>{b}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="py-2 px-4">
-                            <select 
-                              value={tx.purpose || '연금'}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'purpose', e.target.value)}
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            >
-                              <option value="연금">연금</option>
-                              <option value="IRP">IRP</option>
-                              <option value="DC">DC</option>
-                              <option value="기타">기타</option>
-                            </select>
-                          </td>
-                          <td className="py-2 px-4">
-                            <select 
-                              value={tx.name || ''}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'name', e.target.value)}
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            >
-                              <option value="">종목명 선택</option>
-                              {rowAvailableNames.map(name => (
-                                <option key={name} value={name}>{name}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="text" 
-                              value={tx.code || ''}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'code', e.target.value)}
-                              placeholder="종목코드"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm bg-white text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="text" 
-                              value={tx.currency || 'KRW'}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'currency', e.target.value)}
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center bg-white text-slate-900 outline-none font-medium focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="text" 
-                              value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)}
-                              onChange={(e) => {
-                                const raw = e.target.value.replace(/[^0-9.]/g, '');
-                                handleTransactionRowChange(tx.id, 'price', raw === '' ? 0 : parseFloat(raw));
-                              }}
-                              placeholder="0"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900 font-medium"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="number" 
-                              step="any"
-                              value={tx.buyQty === 0 ? '' : tx.buyQty}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)}
-                              placeholder="0"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="number" 
-                              step="any"
-                              value={tx.sellQty === 0 ? '' : tx.sellQty}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)}
-                              placeholder="0"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan="10" className="py-16 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <CheckSquare size={32} className="text-slate-300" />
-                          <p>조회된 거래현황 내역이 없습니다.</p>
-                          <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                  {filteredTransactions.length > 0 ? filteredTransactions.map(tx => {
+                    const rowNames = Array.from(new Set(stocks.filter(s => (s.bank || '').trim() === (tx.bank || '').trim() && (s.purpose || '').trim() === (tx.purpose || '').trim()).map(s => s.name?.trim()).filter(Boolean)));
+                    return (
+                      <tr key={tx.id} className={`hover:bg-slate-50 ${selectedTransactionIds.includes(tx.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedTransactionIds.includes(tx.id)} onChange={() => setSelectedTransactionIds(prev => prev.includes(tx.id) ? prev.filter(i => i !== tx.id) : [...prev, tx.id])} /></td>
+                        <td className="py-2 px-4"><input type="date" value={tx.date || ''} onChange={e => handleTransactionRowChange(tx.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><select value={tx.bank || ''} onChange={e => handleTransactionRowChange(tx.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
+                        <td className="py-2 px-4"><select value={tx.purpose || '연금'} onChange={e => handleTransactionRowChange(tx.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                        <td className="py-2 px-4"><select value={tx.name || ''} onChange={e => handleTransactionRowChange(tx.id, 'name', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">종목명 선택</option>{rowNames.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
+                        <td className="py-2 px-4"><input type="text" value={tx.code || ''} onChange={e => handleTransactionRowChange(tx.id, 'code', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-center"><input type="text" value={tx.currency || 'KRW'} onChange={e => handleTransactionRowChange(tx.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="text" value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)} onChange={e => handleTransactionRowChange(tx.id, 'price', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.buyQty === 0 ? '' : tx.buyQty} onChange={e => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.sellQty === 0 ? '' : tx.sellQty} onChange={e => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="10" className="py-16 text-center text-slate-500">조회된 거래현황 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1860,188 +835,61 @@ export default function App() {
         {/* 4. 포트폴리오 현황 탭 */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-            
-            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
-              
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5 shadow-xs">
-                  <span className="text-xs text-slate-500 font-medium pl-1">기준일자</span>
-                  <input
-                    type="date"
-                    value={pfBaseDate}
-                    onChange={(e) => setPfBaseDate(e.target.value)}
-                    className="text-sm outline-none bg-transparent text-slate-900 font-medium"
-                  />
-                </div>
-
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5 shadow-xs">
-                  <span className="text-xs text-slate-500 font-medium pl-1">은행</span>
-                  <select
-                    value={pfBankFilter}
-                    onChange={(e) => setPfBankFilter(e.target.value)}
-                    className="text-sm outline-none bg-transparent text-slate-900 font-medium"
-                  >
-                    <option value="">전체 은행</option>
-                    {availableBanks.map(b => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5 shadow-xs">
-                  <span className="text-xs text-slate-500 font-medium pl-1">목적</span>
-                  <select
-                    value={pfPurposeFilter}
-                    onChange={(e) => setPfPurposeFilter(e.target.value)}
-                    className="text-sm outline-none bg-transparent text-slate-900 font-medium"
-                  >
-                    <option value="">전체 목적</option>
-                    {availablePurposes.map(p => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-                
-                <button 
-                  onClick={handlePfSearch}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                  <Search size={16} />
-                  조회
-                </button>
-
-                <button 
-                  onClick={handleCalculatePortfolio}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
-                >
-                  <Calculator size={16} />
-                  계산
-                </button>
-
-                <button 
-                  onClick={handleDeletePortfolioRows}
-                  disabled={selectedPortfolioIds.length === 0}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
-                    ${selectedPortfolioIds.length > 0 
-                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
-                      : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
-                    }`}
-                >
-                  <Trash2 size={16} />
-                  삭제 {selectedPortfolioIds.length > 0 && `(${selectedPortfolioIds.length})`}
-                </button>
-
-                <button 
-                  onClick={handleSavePortfoliosToDatabase}
-                  disabled={isSavingPortfolios}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
-                    ${isSavingPortfolios ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
-                >
-                  <Save size={16} />
-                  {isSavingPortfolios ? '저장 중...' : '저장'}
-                </button>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">기준일자</span><input type="date" value={pfBaseDate} onChange={e => setPfBaseDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" /></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">은행</span><select value={pfBankFilter} onChange={e => setPfBankFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 은행</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">목적</span><select value={pfPurposeFilter} onChange={e => setPfPurposeFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 목적</option>{availablePurposes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
+                <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                <button onClick={handleDeletePortfolioRows} disabled={selectedPortfolioIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortfolioIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+                <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
               </div>
-
-              <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm min-w-max">
-                <div className="flex flex-col">
-                  <span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span>
-                  <span className="text-sm font-bold text-slate-800 tracking-tight">
-                    {formatCurrency(portfolioSummary.currentTotal)}원
-                  </span>
-                </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.currentAmount || 0), 0))}원</span></div>
                 <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col">
-                  <span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span>
-                  <span className={`text-sm font-bold tracking-tight ${portfolioSummary.evalProfitLossTotal >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
-                    {formatCurrency(portfolioSummary.evalProfitLossTotal)}원
-                  </span>
-                </div>
+                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0))}원</span></div>
                 <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col">
-                  <span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span>
-                  <span className={`text-sm font-bold tracking-tight ${portfolioSummary.sellProfitLossTotal >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
-                    {formatCurrency(portfolioSummary.sellProfitLossTotal)}원
-                  </span>
-                </div>
+                <div className="flex flex-col"><span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0))}원</span></div>
               </div>
             </div>
-
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[1250px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
-                      <input 
-                        type="checkbox" 
-                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                        checked={filteredPortfolios.length > 0 && selectedPortfolioIds.length === filteredPortfolios.length}
-                        onChange={handleSelectAllPortfolios}
-                      />
-                    </th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">은행</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32">목적</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32 text-right">현재단가</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36 text-right">평가손익</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36 text-right">매매손익</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">이익율</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortfolios.length > 0 && selectedPortfolioIds.length === filteredPortfolios.length} onChange={e => setSelectedPortfolioIds(e.target.checked ? filteredPortfolios.map(p => p.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">현재단가</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">평가손익</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매매손익</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">이익율</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {loadingPortfolios && portfolios.length === 0 ? (
-                    <tr>
-                      <td colSpan="13" className="py-16 text-center text-slate-400">포트폴리오 데이터를 불러오는 중입니다...</td>
+                  {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => (
+                    <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
+                      <td className="py-3 px-4 text-sm font-medium text-slate-800">{pf.bank}</td>
+                      <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
+                      <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.currentPrice, pf.currency)}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss, pf.currency)}</td>
+                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(Number(pf.profitRate || 0) * 100).toFixed(2)}%</td>
+                      <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
                     </tr>
-                  ) : filteredPortfolios.length > 0 ? (
-                    filteredPortfolios.map((pf) => (
-                      <tr 
-                        key={pf.id} 
-                        className={`hover:bg-slate-50 transition-colors ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}
-                      >
-                        <td className="py-3 px-4 w-12">
-                          <input 
-                            type="checkbox" 
-                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
-                            checked={selectedPortfolioIds.includes(pf.id)}
-                            onChange={() => togglePortfolioSelection(pf.id)}
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-sm font-medium text-slate-800">{pf.bank}</td>
-                        <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
-                        <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.currentPrice, pf.currency)}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
-                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
-                          {formatCurrency(pf.evalProfitLoss, pf.currency)}
-                        </td>
-                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
-                          {formatCurrency(pf.sellProfitLoss, pf.currency)}
-                        </td>
-                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>
-                          {(Number(pf.profitRate || 0) * 100).toFixed(2)}%
-                        </td>
-                        <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="13" className="py-16 text-center text-slate-500">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <PiggyBank size={32} className="text-slate-300" />
-                          <p>조회된 포트폴리오 현황이 없습니다.</p>
-                          <p className="text-sm text-slate-400">상단의 [계산] 버튼을 눌러 포트폴리오를 산출해보세요.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
+                  )) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
                 </tbody>
               </table>
             </div>
