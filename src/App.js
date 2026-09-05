@@ -13,7 +13,8 @@ import {
   Save
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { db } from './firebase';
+import { db, auth } from './firebase';
+import { signInAnonymously } from 'firebase/auth';
 import { 
   collection, 
   getDocs, 
@@ -71,7 +72,7 @@ export default function App() {
   const [payments, setPayments] = useState([]);
   
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // 저장 중복 방지 상태
+  const [isSaving, setIsSaving] = useState(false);
   
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
@@ -92,7 +93,21 @@ export default function App() {
       script.onload = () => setIsTailwindLoaded(true);
       document.head.appendChild(script);
     }
-    fetchPayments();
+
+    // Firebase 익명 인증 실행 (권한 거부 에러 원천 방지)
+    const initAuthAndFetch = async () => {
+      try {
+        if (auth) {
+          await signInAnonymously(auth);
+          console.log("🔥 Firebase 익명 인증 성공");
+        }
+      } catch (authErr) {
+        console.warn("⚠️ 익명 인증 경고 (이미 인증되었거나 설정 확인 필요):", authErr);
+      }
+      fetchPayments();
+    };
+
+    initAuthAndFetch();
   }, []);
 
   const fetchPayments = async () => {
@@ -108,7 +123,7 @@ export default function App() {
       setDeletedIds([]);
     } catch (error) {
       console.error("데이터 불러오기 실패:", error);
-      showError('데이터를 불러오지 못했습니다. Firebase 설정을 확인해주세요.');
+      showError(`데이터를 불러오지 못했습니다.\n(${error.message})`);
     } finally {
       setLoading(false);
     }
@@ -223,16 +238,15 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // [저장] 버튼 로직: Firebase Batch(일괄 처리)를 사용하여 속도 대폭 개선 및 타임아웃 30초로 연장
+  // [저장] 버튼 로직: 무한 로딩 방지 타이머 및 인증 처리 포함
   const handleSaveToDatabase = async () => {
     if (isSaving) return;
     
     setIsSaving(true);
-    console.log("=== 저장 작업 시작 (Batch 방식) ===");
+    console.log("=== 저장 작업 시작 ===");
 
-    // 대용량 엑셀도 거뜬히 처리하도록 타임아웃을 30초로 넉넉하게 설정
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 30000)
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. Firebase 보안 규칙(Rules)이나 네트워크 연결을 확인해주세요.")), 15000)
     );
 
     const saveExecution = async () => {
@@ -266,7 +280,6 @@ export default function App() {
         }
       }
 
-      // 일괄 커밋 실행
       await batch.commit();
     };
 
