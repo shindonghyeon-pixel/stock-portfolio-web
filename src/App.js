@@ -334,11 +334,9 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // [현재단가 산출 로직 수정]
-      // - 통화가 KRW인 경우: 한국증권거래소(KRX) 기준일자 기준 (장중 단가 또는 종가)
+      // [현재단가 산출 로직 수정 (시장 시세 연동 규칙 적용)]
+      // - 통화가 KRW인 경우: 한국증권거래소(KRX) 기준일자 기준 (오늘 장중 거래가 있으면 장중 단가, 없으면 직전 종가)
       // - 통화가 USD인 경우: 미국증권거래소 기준 (기준일자 - 1일 기준 장중 단가 또는 종가)
-      // * 시장 시세 연동이 분리되어 있으므로, 해당 종목코드의 시장 기준일 시세 데이터를 먼저 조회하고,
-      //   데이터가 없을 경우 거래현황의 최근 종가나 평균단가를 폴백(Fallback)으로 안전하게 참조합니다.
       let targetPriceDate = baseDate;
       if (currency === 'USD') {
         const bd = new Date(baseDate);
@@ -346,16 +344,27 @@ export default function App() {
         targetPriceDate = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
       }
 
-      // 시장 시세 조회 연동 (거래현황과 무관하게 해당 종목코드의 targetPriceDate 이하 기준 최신 시세 종가/장중단가 조회)
-      const marketTxs = transactions.filter(t => 
+      // 1순위: 당일(또는 목표일) 거래 내역이 존재하면 해당 단가(장중 단가) 사용
+      // 2순위: 당일 거래가 없으면 목표일자 이전(<= targetPriceDate) 중 가장 최근 거래일의 종가 사용
+      const exactMatchTxs = transactions.filter(t => 
         (t.code || '').trim() === code.trim() &&
         (t.currency || 'KRW').trim() === currency.trim() &&
-        (t.date || '') <= targetPriceDate
-      ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        (t.date || '') === targetPriceDate
+      );
 
       let currentPrice = avgPrice;
-      if (marketTxs.length > 0) {
-        currentPrice = Number(marketTxs[0].price || avgPrice);
+      if (exactMatchTxs.length > 0) {
+        currentPrice = Number(exactMatchTxs[0].price || avgPrice);
+      } else {
+        const priorMarketTxs = transactions.filter(t => 
+          (t.code || '').trim() === code.trim() &&
+          (t.currency || 'KRW').trim() === currency.trim() &&
+          (t.date || '') < targetPriceDate
+        ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        if (priorMarketTxs.length > 0) {
+          currentPrice = Number(priorMarketTxs[0].price || avgPrice);
+        }
       }
 
       const purchaseAmount = qty * avgPrice;
