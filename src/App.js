@@ -236,21 +236,16 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. 구글시트 단가현황 API 호출 (새로 발급된 URL 적용)
+    // 1. 구글시트 단가현황 API 호출
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbzsinoBtvlVMUQC69g2Aa6EmRM747h8ffB5_r1zM5hf1FReRQbLgJy-jHMgn6J7xFfC/exec';
-      console.log("=== 구글 API 호출 시도 ===", apiUrl);
-
       const res = await fetch(apiUrl);
       if (!res.ok) throw new Error(`HTTP 통신 에러: ${res.status}`);
       
       const textData = await res.text();
-      console.log("=== 구글 API 원본 텍스트 데이터 ===", textData.substring(0, 200) + "...");
-      
       const sheetData = JSON.parse(textData);
       
-      // 앱스 스크립트에서 반환된 데이터 구조 매핑 ([{ code, price }, ...])
       let targetArray = Array.isArray(sheetData) ? sheetData : (sheetData.data || Object.values(sheetData).find(Array.isArray) || []);
       
       targetArray.forEach(item => {
@@ -271,9 +266,8 @@ export default function App() {
           externalPriceMap.set(matchedCode, matchedPrice);
         }
       });
-      console.log("=== 매핑 성공한 단가 데이터 개수 ===", externalPriceMap.size);
     } catch (err) {
-      console.error("=== 구글시트 API 연동 실패 (CORS 또는 파싱 오류) ===", err);
+      console.error("구글시트 API 연동 실패:", err);
     }
 
     const d = new Date(baseDate);
@@ -339,13 +333,12 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // 현재단가 산출: 1) 구글시트 API 단가현황 매칭 우선, 2) 기존 저장된 값 유지, 3) 0원
       let currentPrice = 0;
       const cleanCode = (code || '').trim();
       if (externalPriceMap.has(cleanCode)) {
         currentPrice = externalPriceMap.get(cleanCode);
       } else {
-        const existingPf = portfolios.find(p => p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
+        const existingPf = portfolios.find(p => !p.isManual && p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
         if (existingPf && existingPf.currentPrice > 0) {
           currentPrice = existingPf.currentPrice;
         }
@@ -372,13 +365,54 @@ export default function App() {
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
-        profitRate: profitRate
+        profitRate: profitRate,
+        isManual: false
       });
     }
 
+    // 기존에 존재하던 수동 추가 항목들 처리 (전일자 현재금액 연동 및 평가손익 계산)
+    const existingManualItems = portfolios.filter(p => p.isManual);
+    existingManualItems.forEach(manual => {
+      // 전일자(prevDateStr)에 동일한 수동 항목이 있는지 확인하여 전일자 현재금액 탐색
+      const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === manual.bank && p.purpose === manual.purpose && p.name === manual.name);
+      const prevCurrentAmount = prevManual ? Number(prevManual.currentAmount || 0) : Number(manual.currentAmount || 0);
+      const currentAmount = Number(manual.currentAmount || 0);
+      const evalProfitLoss = prevCurrentAmount - currentAmount;
+
+      newPfList.push({
+        ...manual,
+        id: manual.id || ('manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)),
+        baseDate: baseDate,
+        evalProfitLoss: evalProfitLoss
+      });
+    });
+
     setPortfolios(newPfList);
-    setSuccessMessage('포트폴리오 계산 및 구글시트 단가 연동이 완료되었습니다.');
+    setSuccessMessage('포트폴리오 계산이 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleAddPortfolioRow = () => {
+    const defaultBank = availableBanks[0] || '';
+    const defaultPurpose = availablePurposes[0] || '연금';
+    setPortfolios(prev => [{
+      id: 'temp_manual_' + Date.now(),
+      baseDate: pfBaseDate || getTodayString(),
+      bank: defaultBank,
+      purpose: defaultPurpose,
+      name: '',
+      code: '',
+      currency: 'KRW',
+      avgPrice: 0,
+      currentPrice: 0,
+      qty: 0,
+      purchaseAmount: 0,
+      currentAmount: 0,
+      evalProfitLoss: 0,
+      sellProfitLoss: 0,
+      profitRate: 0,
+      isManual: true
+    }, ...prev]);
   };
 
   const handleAddRow = () => {
@@ -442,7 +476,7 @@ export default function App() {
 
   const handleDeletePortfolioRows = () => {
     if (selectedPortfolioIds.length === 0) return;
-    setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_'))]);
+    setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_') && !String(id).startsWith('temp_manual_') && !String(id).startsWith('manual_'))]);
     setPortfolios(prev => prev.filter(p => !selectedPortfolioIds.includes(p.id)));
     setSelectedPortfolioIds([]);
   };
@@ -607,9 +641,25 @@ export default function App() {
       const batch = writeBatch(db);
       deletedPortfolioIds.forEach(id => batch.delete(doc(db, "portfolios", id)));
       portfolios.forEach(pf => {
-        const ref = String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') ? doc(collection(db, "portfolios")) : doc(db, "portfolios", pf.id);
-        const data = { baseDate: pf.baseDate, bank: pf.bank, purpose: pf.purpose, name: pf.name, code: pf.code, currency: pf.currency || 'KRW', avgPrice: pf.avgPrice, currentPrice: pf.currentPrice, qty: pf.qty, purchaseAmount: pf.purchaseAmount, currentAmount: pf.currentAmount, evalProfitLoss: pf.evalProfitLoss, sellProfitLoss: pf.sellProfitLoss, profitRate: pf.profitRate };
-        if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_')) data.createdAt = serverTimestamp();
+        const ref = String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') || String(pf.id).startsWith('temp_manual_') || String(pf.id).startsWith('manual_') ? doc(collection(db, "portfolios")) : doc(db, "portfolios", pf.id);
+        const data = { 
+          baseDate: pf.baseDate, 
+          bank: pf.bank, 
+          purpose: pf.purpose, 
+          name: pf.name, 
+          code: pf.code || '', 
+          currency: pf.currency || 'KRW', 
+          avgPrice: pf.avgPrice || 0, 
+          currentPrice: pf.currentPrice || 0, 
+          qty: pf.qty || 0, 
+          purchaseAmount: pf.purchaseAmount || 0, 
+          currentAmount: pf.currentAmount || 0, 
+          evalProfitLoss: pf.evalProfitLoss || 0, 
+          sellProfitLoss: pf.sellProfitLoss || 0, 
+          profitRate: pf.profitRate || 0,
+          isManual: !!pf.isManual
+        };
+        if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') || String(pf.id).startsWith('temp_manual_') || String(pf.id).startsWith('manual_')) data.createdAt = serverTimestamp();
         batch.set(ref, data, { merge: true });
       });
       await batch.commit();
@@ -676,11 +726,25 @@ export default function App() {
     setPortfolios(prev => prev.map(pf => {
       if (pf.id === id) {
         const updated = { ...pf, [field]: val };
-        if (field === 'currentPrice') {
-          const newCurrentPrice = Number(val || 0);
-          updated.currentAmount = updated.qty * newCurrentPrice;
-          updated.evalProfitLoss = updated.currentAmount - updated.purchaseAmount;
-          updated.profitRate = updated.purchaseAmount > 0 ? updated.evalProfitLoss / updated.purchaseAmount : 0;
+        if (pf.isManual) {
+          if (field === 'currentAmount') {
+            const newAmount = Number(val || 0);
+            updated.currentAmount = newAmount;
+            // 수동 항목 평가손익: 전일자 현재금액 - 오늘자 현재금액 (임시로 입력값 반영 전 기준 계산을 위해 실시간 연동)
+            const d = new Date(updated.baseDate || pfBaseDate);
+            d.setDate(d.getDate() - 1);
+            const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === updated.bank && p.purpose === updated.purpose && p.name === updated.name);
+            const prevAmount = prevManual ? Number(prevManual.currentAmount || 0) : newAmount;
+            updated.evalProfitLoss = prevAmount - newAmount;
+          }
+        } else {
+          if (field === 'currentPrice') {
+            const newCurrentPrice = Number(val || 0);
+            updated.currentAmount = updated.qty * newCurrentPrice;
+            updated.evalProfitLoss = updated.currentAmount - updated.purchaseAmount;
+            updated.profitRate = updated.purchaseAmount > 0 ? updated.evalProfitLoss / updated.purchaseAmount : 0;
+          }
         }
         return updated;
       }
@@ -916,6 +980,7 @@ export default function App() {
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">목적</span><select value={pfPurposeFilter} onChange={e => setPfPurposeFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 목적</option>{availablePurposes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
                 <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                <button onClick={handleAddPortfolioRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeletePortfolioRows} disabled={selectedPortfolioIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortfolioIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
                 <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
               </div>
@@ -936,7 +1001,7 @@ export default function App() {
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
-                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가 (수동입력가능)</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가 / 현재금액</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
@@ -947,31 +1012,60 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => (
-                    <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
-                      <td className="py-3 px-4 text-sm font-medium text-slate-800">{pf.bank}</td>
-                      <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
-                      <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
-                      <td className="py-2 px-4 text-right">
-                        <input 
-                          type="text" 
-                          value={pf.currentPrice === 0 || pf.currentPrice === '' ? '' : formatCurrency(pf.currentPrice, pf.currency)}
-                          onChange={e => handlePortfolioRowChange(pf.id, 'currentPrice', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
-                          placeholder="0"
-                          className="w-full px-2 py-1 border border-indigo-200 rounded text-sm text-right font-medium bg-indigo-50/30 text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
-                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
-                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss, pf.currency)}</td>
-                      <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(Number(pf.profitRate || 0) * 100).toFixed(2)}%</td>
-                      <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
-                    </tr>
-                  )) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                  {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
+                    if (pf.isManual) {
+                      return (
+                        <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
+                          <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
+                          <td className="py-2 px-4"><select value={pf.bank || ''} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, bank: e.target.value } : p))} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="">선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
+                          <td className="py-2 px-4"><select value={pf.purpose || '연금'} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, purpose: e.target.value } : p))} className="w-full px-2 py-1 border rounded text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                          <td className="py-2 px-4"><input type="text" value={pf.name || ''} onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, name: e.target.value } : p))} placeholder="종목명 입력" className="w-full px-2 py-1 border rounded text-sm bg-white" /></td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-2 px-4 text-right">
+                            <input 
+                              type="text" 
+                              value={pf.currentAmount === 0 || pf.currentAmount === '' ? '' : formatCurrency(pf.currentAmount, pf.currency)}
+                              onChange={e => handlePortfolioRowChange(pf.id, 'currentAmount', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+                              placeholder="0"
+                              className="w-full px-2 py-1 border border-teal-300 rounded text-sm text-right font-medium bg-teal-50/30 text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                            />
+                          </td>
+                          <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-3 px-4 text-sm text-right text-slate-400">-</td>
+                          <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency || 'KRW'}</td>
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortfolioIds.includes(pf.id)} onChange={() => setSelectedPortfolioIds(prev => prev.includes(pf.id) ? prev.filter(i => i !== pf.id) : [...prev, pf.id])} /></td>
+                        <td className="py-3 px-4 text-sm font-medium text-slate-800">{pf.bank}</td>
+                        <td className="py-3 px-4 text-sm text-slate-600">{pf.purpose}</td>
+                        <td className="py-3 px-4 text-sm font-medium text-slate-900">{pf.name} <span className="text-xs text-slate-400 font-normal">({pf.code})</span></td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(pf.avgPrice, pf.currency)}</td>
+                        <td className="py-2 px-4 text-right">
+                          <input 
+                            type="text" 
+                            value={pf.currentPrice === 0 || pf.currentPrice === '' ? '' : formatCurrency(pf.currentPrice, pf.currency)}
+                            onChange={e => handlePortfolioRowChange(pf.id, 'currentPrice', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)}
+                            placeholder="0"
+                            className="w-full px-2 py-1 border border-indigo-200 rounded text-sm text-right font-medium bg-indigo-50/30 text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss, pf.currency)}</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(Number(pf.profitRate || 0) * 100).toFixed(2)}%</td>
+                        <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
                 </tbody>
               </table>
             </div>
