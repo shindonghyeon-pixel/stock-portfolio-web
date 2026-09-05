@@ -113,6 +113,7 @@ export default function App() {
   const [appliedPfBaseDate, setAppliedPfBaseDate] = useState(getTodayString());
   const [appliedPfBankFilter, setAppliedPfBankFilter] = useState('');
   const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
+  const [exchangeRate, setExchangeRate] = useState(1350); // 기본 환율
 
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
@@ -137,7 +138,20 @@ export default function App() {
     fetchStocks();
     fetchTransactions();
     fetchPortfolios();
+    fetchExchangeRate();
   }, []);
+
+  const fetchExchangeRate = async () => {
+    try {
+      const res = await fetch('https://open.er-api.com/v6/latest/USD');
+      const data = await res.json();
+      if (data && data.rates && data.rates.KRW) {
+        setExchangeRate(data.rates.KRW);
+      }
+    } catch (e) {
+      console.error("환율 정보 조회 실패:", e);
+    }
+  };
 
   const fetchPayments = async () => {
     try {
@@ -370,7 +384,6 @@ export default function App() {
       });
     }
 
-    // 기존 수동 추가 항목들 처리 (전일자 현재금액 연동 및 평가손익 계산)
     const existingManualItems = portfolios.filter(p => p.isManual);
     existingManualItems.forEach(manual => {
       const prevManual = portfolios.find(p => p.isManual && p.baseDate === prevDateStr && p.bank === manual.bank && p.purpose === manual.purpose && p.name === manual.name);
@@ -727,7 +740,6 @@ export default function App() {
         const updated = { ...pf, [field]: val };
         if (pf.isManual) {
           if (field === 'bank' || field === 'purpose') {
-            // 은행이나 목적이 바뀌면 기존 선택된 종목명이 유효한지 확인하고 초기화할 수 있음
             updated.name = '';
           }
           if (field === 'currentAmount') {
@@ -978,6 +990,7 @@ export default function App() {
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">기준일자</span><input type="date" value={pfBaseDate} onChange={e => setPfBaseDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" /></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">환율(USD/KRW)</span><input type="number" step="any" value={exchangeRate} onChange={e => setExchangeRate(parseFloat(e.target.value) || 0)} className="w-24 text-sm outline-none bg-transparent font-medium text-right" /></div>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">은행</span><select value={pfBankFilter} onChange={e => setPfBankFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 은행</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">목적</span><select value={pfPurposeFilter} onChange={e => setPfPurposeFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 목적</option>{availablePurposes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
                 <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
@@ -987,11 +1000,11 @@ export default function App() {
                 <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
-                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.currentAmount || 0), 0))}원</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
                 <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.evalProfitLoss || 0), 0))}원</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
                 <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + Number(c.sellProfitLoss || 0), 0))}원</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
               </div>
             </div>
             <div className="flex-1 overflow-auto">
@@ -1003,7 +1016,7 @@ export default function App() {
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm">종목명</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32 text-right">평균단가</th>
-                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가 / 현재금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재단가</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-28 text-right">수량</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">매입금액</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">현재금액</th>
@@ -1015,8 +1028,10 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
+                    const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
+                    const multiplier = isUSD ? exchangeRate : 1;
+
                     if (pf.isManual) {
-                      // 종목 관리(stocks)에서 현재 선택된 은행과 목적이 같고, 종목 코드가 없는 항목들의 종목명 추출
                       const availableManualNames = Array.from(new Set(
                         stocks
                           .filter(s => (s.bank || '').trim() === (pf.bank || '').trim() && (s.purpose || '').trim() === (pf.purpose || '').trim() && !s.code?.trim())
@@ -1076,10 +1091,10 @@ export default function App() {
                           />
                         </td>
                         <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount, pf.currency)}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount, pf.currency)}</td>
-                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss, pf.currency)}</td>
-                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss, pf.currency)}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] text-slate-400 font-normal">($ {formatCurrency(pf.purchaseAmount, 'USD')})</span>}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] text-slate-400 font-normal">($ {formatCurrency(pf.currentAmount, 'USD')})</span>}</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] font-normal opacity-75">($ {formatCurrency(pf.evalProfitLoss, 'USD')})</span>}</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] font-normal opacity-75">($ {formatCurrency(pf.sellProfitLoss, 'USD')})</span>}</td>
                         <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.profitRate || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(Number(pf.profitRate || 0) * 100).toFixed(2)}%</td>
                         <td className="py-3 px-4 text-sm text-center text-slate-600 font-medium">{pf.currency}</td>
                       </tr>
