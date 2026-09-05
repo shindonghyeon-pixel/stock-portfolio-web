@@ -8,8 +8,7 @@ import {
   DollarSign, 
   PieChart as PieChartIcon, 
   AlertCircle,
-  CheckCircle2,
-  RefreshCw
+  CheckCircle2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -25,17 +24,14 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState('payment');
   
-  // 데이터 상태
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // 조회 조건 및 입력 폼 상태
   const [searchYear, setSearchYear] = useState('');
   const [filteredPayments, setFilteredPayments] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [excelMessage, setExcelMessage] = useState({ type: '', text: '' });
 
-  // 새로 추가할 행 상태 (하단 테이블에 직접 추가용)
   const [newRow, setNewRow] = useState({
     date: new Date().toISOString().split('T')[0],
     bank: '미래에셋',
@@ -43,7 +39,6 @@ export default function App() {
     amount: ''
   });
 
-  // 1. Firebase에서 데이터 불러오기
   const fetchPayments = async () => {
     try {
       setLoading(true);
@@ -52,7 +47,6 @@ export default function App() {
         id: doc.id,
         ...doc.data()
       }));
-      // 최신순 정렬 (날짜 기준)
       dataList.sort((a, b) => new Date(b.date) - new Date(a.date));
       setPayments(dataList);
       setFilteredPayments(dataList);
@@ -67,7 +61,6 @@ export default function App() {
     fetchPayments();
   }, []);
 
-  // 2. 조회 로직 (연도별 필터링)
   const handleSearch = () => {
     if (!searchYear.trim()) {
       setFilteredPayments(payments);
@@ -78,7 +71,6 @@ export default function App() {
     setSelectedIds([]);
   };
 
-  // 3. 행 추가 (DB 저장)
   const handleAddRow = async () => {
     if (!newRow.date || !newRow.amount) {
       alert('납입일자와 금액은 필수 입력입니다.');
@@ -95,9 +87,8 @@ export default function App() {
       };
 
       await addDoc(collection(db, "payments"), itemToSave);
-      await fetchPayments(); // DB에서 최신 데이터 다시 불러오기
+      await fetchPayments();
       
-      // 입력 폼 초기화
       setNewRow({
         date: new Date().toISOString().split('T')[0],
         bank: '미래에셋',
@@ -111,7 +102,6 @@ export default function App() {
     }
   };
 
-  // 4. 체크박스 선택/해제
   const handleSelectOne = (id) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter(item => item !== id));
@@ -128,14 +118,13 @@ export default function App() {
     }
   };
 
-  // 5. 선택 삭제 (DB 삭제)
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) {
       alert('삭제할 항목을 선택해주세요.');
       return;
     }
 
-    if (!window.confirm(`선택한 ${selectedIds.length개의 항목을 정말 삭제하시겠습니까?`)) return;
+    if (!window.confirm('선택한 항목들을 정말 삭제하시겠습니까?')) return;
 
     try {
       for (const id of selectedIds) {
@@ -150,7 +139,6 @@ export default function App() {
     }
   };
 
-  // 6. 엑셀 업로드 (DB 일괄 저장)
   const handleExcelUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -181,22 +169,20 @@ export default function App() {
         }
 
         await fetchPayments();
-        setExcelMessage({ type: 'success', text: `성공적으로 ${data.length}개의 데이터를 업로드하여 동기화했습니다!` });
+        setExcelMessage({ type: 'success', text: '엑셀 데이터를 성공적으로 업로드했습니다!' });
       } catch (err) {
         console.error(err);
-        setExcelMessage({ type: 'error', text: '엑셀 파일을 읽거나 저장하는 중 오류가 발생했습니다.' });
+        setExcelMessage({ type: 'error', text: '엑셀 파일을 읽는 중 오류가 발생했습니다.' });
       }
     };
     reader.readAsBinaryString(file);
   };
 
-  // 금액 총합 계산
   const totalAmountAll = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const totalAmountFiltered = filteredPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col">
-      {/* 상단 네비게이션 */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center space-x-3">
@@ -212,7 +198,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* 탭 네비게이션 */}
       <div className="max-w-7xl mx-auto w-full px-4 mt-6">
         <div className="flex space-x-2 border-b border-slate-200">
           <button
@@ -238,15 +223,10 @@ export default function App() {
         </div>
       </div>
 
-      {/* 메인 콘텐츠 영역 */}
       <main className="max-w-7xl mx-auto w-full px-4 py-6 flex-1 space-y-6">
         {activeTab === 'payment' && (
           <div className="space-y-6">
-            
-            {/* 1. 상단 컨트롤 영역 */}
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
-              
-              {/* 좌측: 검색 및 버튼 그룹 */}
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
                   <span className="text-sm font-medium text-slate-600">납입연도</span>
@@ -279,7 +259,6 @@ export default function App() {
                 </label>
               </div>
 
-              {/* 우측: 금액 요약 정보 */}
               <div className="flex items-center gap-6 bg-slate-50 border border-slate-200 px-5 py-3 rounded-xl w-full lg:w-auto justify-around lg:justify-end">
                 <div className="text-right">
                   <p className="text-xs text-slate-500 font-medium">납입 총액 (전체)</p>
@@ -291,10 +270,8 @@ export default function App() {
                   <p className="text-base font-bold text-indigo-600">{totalAmountFiltered.toLocaleString()} 원</p>
                 </div>
               </div>
-
             </div>
 
-            {/* 알림 메시지 */}
             {excelMessage.text && (
               <div className={`p-4 rounded-xl border flex items-center gap-3 text-sm ${
                 excelMessage.type === 'error' ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'
@@ -304,7 +281,6 @@ export default function App() {
               </div>
             )}
 
-            {/* 직접 입력 행 추가 컨트롤 바 */}
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center gap-3">
               <span className="text-sm font-bold text-slate-700 ml-1">직접 추가:</span>
               <input
@@ -347,7 +323,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* 2. 하단 상세 내역 (데이터 테이블) */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -404,7 +379,6 @@ export default function App() {
                 </table>
               </div>
             </div>
-
           </div>
         )}
 
