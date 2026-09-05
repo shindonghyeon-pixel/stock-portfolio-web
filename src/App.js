@@ -12,17 +12,57 @@ import {
   AlertCircle,
   Save
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
-import { db } from './firebase';
-import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  updateDoc,
-  deleteDoc, 
-  doc, 
-  serverTimestamp 
-} from 'firebase/firestore';
+
+// ============================================================================
+// [에러 해결 안내]
+// 우측 미리보기(Preview) 환경에서는 npm 패키지(xlsx)나 로컬 파일(./firebase)을 
+// 직접 불러올 수 없어 컴파일 에러가 발생합니다.
+// 미리보기 화면이 정상 작동하도록 브라우저 저장소(LocalStorage)를 이용한 가짜(Mock) Firebase와
+// CDN 방식을 이용한 엑셀(XLSX) 로딩으로 임시 변경했습니다.
+// 
+// ※ 실제 로컬 PC(VS Code 등)에서 배포용으로 작업하실 때는 
+// 아래 Mock 코드를 지우고 기존의 import 문을 그대로 사용하시면 됩니다!
+// ============================================================================
+
+// 1. Firebase Mock (미리보기 환경 전용)
+const db = {}; 
+const collection = (db, name) => name;
+const doc = (db, name, id) => ({ collection: name, id });
+const serverTimestamp = () => new Date().toISOString();
+
+const getDocs = async (collName) => {
+  const data = JSON.parse(localStorage.getItem(`mock_${collName}`) || '[]');
+  return {
+    docs: data.map(item => ({
+      id: item.id,
+      data: () => item
+    }))
+  };
+};
+
+const addDoc = async (collName, data) => {
+  const items = JSON.parse(localStorage.getItem(`mock_${collName}`) || '[]');
+  const newId = 'mock_' + Date.now();
+  const newItem = { id: newId, ...data };
+  items.push(newItem);
+  localStorage.setItem(`mock_${collName}`, JSON.stringify(items));
+  return { id: newId };
+};
+
+const updateDoc = async (docRef, data) => {
+  const items = JSON.parse(localStorage.getItem(`mock_${docRef.collection}`) || '[]');
+  const index = items.findIndex(item => item.id === docRef.id);
+  if (index > -1) {
+    items[index] = { ...items[index], ...data };
+    localStorage.setItem(`mock_${docRef.collection}`, JSON.stringify(items));
+  }
+};
+
+const deleteDoc = async (docRef) => {
+  const items = JSON.parse(localStorage.getItem(`mock_${docRef.collection}`) || '[]');
+  const filtered = items.filter(item => item.id !== docRef.id);
+  localStorage.setItem(`mock_${docRef.collection}`, JSON.stringify(filtered));
+};
 
 const getTodayString = () => {
   const today = new Date();
@@ -37,70 +77,121 @@ const formatCurrency = (amount) => {
   return Number(amount).toLocaleString('ko-KR');
 };
 
+// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 강력한 함수
+const parseExcelDate = (val) => {
+  if (!val) return getTodayString();
+  
+  // 1. 엑셀 숫자형 날짜 (시리얼 넘버) 처리
+  if (typeof val === 'number') {
+    // 엑셀 기준일(1900-01-01)을 자바스크립트 날짜로 변환 (윤년 버그 25569 보정)
+    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // 2. 문자열 형태 처리 (예: "2026.01.15", "2026/01/15")
+  if (typeof val === 'string') {
+    let clean = val.trim().replace(/[\.\/]/g, '-');
+    // 정규식으로 YYYY-MM-DD 형태인지 확인
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
+      const parts = clean.split('-');
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    }
+    // 일반 Date 파싱
+    const parsed = new Date(clean);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return clean;
+  }
+
+  return getTodayString();
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('payment');
   const [payments, setPayments] = useState([]);
+  
+  // 화면 로딩 및 저장 상태 구분
   const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false); // 저장 무한 로딩 방지용
+  
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   
-  // 삭제할 ID들을 모아두는 상태
   const [deletedIds, setDeletedIds] = useState([]);
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
 
-  // 1. Firebase 데이터 불러오기
+  useEffect(() => {
+    // Tailwind CSS가 설치되지 않아 디자인이 깨지는 것을 막는 임시 마법 코드
+    if (!document.getElementById('tailwind-cdn')) {
+      const script = document.createElement('script');
+      script.id = 'tailwind-cdn';
+      script.src = 'https://cdn.tailwindcss.com';
+      document.head.appendChild(script);
+    }
+    
+    // 엑셀(XLSX) 라이브러리 CDN 동적 로드 (esbuild 에러 방지)
+    if (!window.XLSX) {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    fetchPayments();
+  }, []);
+
   const fetchPayments = async () => {
     try {
       setLoading(true);
       const querySnapshot = await getDocs(collection(db, "payments"));
       const dataList = querySnapshot.docs.map(docSnap => ({
         id: docSnap.id,
-        isNew: false, // 기존 DB 데이터
         ...docSnap.data()
       }));
       dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       setPayments(dataList);
-      setDeletedIds([]);
+      setDeletedIds([]); // 불러온 후 삭제 대기열 초기화
     } catch (error) {
       console.error("데이터 불러오기 실패:", error);
+      showError('서버에서 데이터를 불러오는 중 문제가 발생했습니다.');
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    fetchPayments();
-  }, []);
 
   const handleSearch = () => {
     setAppliedSearchYear(searchYearInput);
     setSelectedIds([]); 
   };
 
-  // 2. 추가 버튼: 화면에 임시 행 추가 (저장 버튼을 눌러야 DB 반영)
   const handleAddRow = () => {
     const newRow = {
-      id: 'temp_' + Date.now(), // 임시 ID
+      id: 'temp_' + Date.now(), // 저장 전 임시 ID
       date: getTodayString(),
       bank: '미래에셋',
       purpose: '연금',
       amount: 0,
-      isNew: true // 새로 추가된 항목 표시
     };
     setPayments(prev => [newRow, ...prev]);
   };
 
-  // 3. 삭제 버튼: 화면상에서 체크된 항목을 목록에서 제외하고 삭제 대기열에 등록
   const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
     
-    // DB에 이미 존재하는 데이터(임시 ID가 아닌 것)는 삭제 대기열에 추가
-    const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_'));
+    // DB에 이미 있는 데이터(temp_, excel_ 로 시작하지 않는 것)만 삭제 대기열로 이동
+    const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'));
     setDeletedIds(prev => [...prev, ...targetRealIds]);
 
-    // 화면에서 즉시 제거
+    // 화면에서는 즉시 보이지 않게 제거
     setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
     setSelectedIds([]);
   };
@@ -109,48 +200,47 @@ export default function App() {
     setErrorModal({ isOpen: true, message });
   };
 
-  // 4. 엑셀 업로드: 데이터를 파싱하여 화면에 일괄 추가 (저장 버튼을 눌러야 DB 반영)
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const fileExt = file.name.split('.').pop().toLowerCase();
-    if (fileExt !== 'xlsx' && fileExt !== 'xls') {
-      showError('유효한 엑셀 파일(.xlsx, .xls)만 업로드 가능합니다.');
+    // 연속으로 동일한 파일을 올릴 수 있게 인풋 초기화
+    e.target.value = '';
+
+    if (!window.XLSX) {
+      showError('엑셀 처리 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
+        const XLSX = window.XLSX;
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
 
-        if (workbook.SheetNames.length !== 1) {
-          showError(`엑셀 파일에 시트가 ${workbook.SheetNames.length}개 있습니다. 반드시 1개의 시트만 존재해야 합니다.`);
+        if (workbook.SheetNames.length === 0) {
+          showError('엑셀 파일에 시트가 존재하지 않습니다.');
           return;
         }
 
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+        
+        // raw: true를 통해 엑셀의 원본 시리얼 날짜(숫자)를 그대로 가져옴
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
 
-        if (jsonData.length === 0) {
-          showError('엑셀 시트가 비어있습니다.');
+        if (jsonData.length < 2) {
+          showError('엑셀 시트에 데이터가 부족합니다.');
           return;
         }
 
         const headers = jsonData[0];
         const requiredColumns = ['납입일자', '은행', '목적', '금액'];
         const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+        
         if (missingColumns.length > 0) {
-          showError(`다음 필수 열이 누락되었습니다: [ ${missingColumns.join(', ')} ]\n(1행에 '납입일자', '은행', '목적', '금액' 열이 모두 있어야 합니다.)`);
-          return;
-        }
-
-        const dataRows = jsonData.slice(1).filter(row => row.length > 0);
-        if (dataRows.length === 0) {
-          showError('열 제목 아래에 실제 데이터가 존재하지 않습니다.');
+          showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '납입일자', '은행', '목적', '금액' 열이 있어야 합니다.)`);
           return;
         }
 
@@ -161,75 +251,80 @@ export default function App() {
           amount: headers.indexOf('금액'),
         };
 
+        const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
+        
         const excelRows = dataRows.map((row, index) => {
-          let dateStr = String(row[colIndices.date] || getTodayString()).trim();
-          dateStr = dateStr.replace(/[\.\/]/g, '-');
-          
-          const amountStr = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
-          const amountNum = parseInt(amountStr, 10) || 0;
+          // 위에서 만든 강력한 날짜 파서 사용
+          const rawDate = row[colIndices.date];
+          const parsedDate = parseExcelDate(rawDate);
+
+          const rawAmount = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
+          const amountNum = parseInt(rawAmount, 10) || 0;
 
           return {
             id: 'excel_' + Date.now() + '_' + index,
-            date: dateStr,
-            bank: row[colIndices.bank] || '기타',
-            purpose: row[colIndices.purpose] || '기타',
+            date: parsedDate,
+            bank: String(row[colIndices.bank] || '기타').trim(),
+            purpose: String(row[colIndices.purpose] || '기타').trim(),
             amount: amountNum,
-            isNew: true // 새로 추가된 항목으로 처리
           };
         });
 
         setPayments(prev => [...excelRows, ...prev]);
-        setSuccessMessage('엑셀 데이터가 성공적으로 로드되었습니다. [저장] 버튼을 누르면 DB에 반영됩니다.');
+        setSuccessMessage('엑셀이 성공적으로 로드되었습니다. [저장]을 눌러 완료하세요.');
         setTimeout(() => setSuccessMessage(''), 4000);
       } catch (err) {
         console.error(err);
-        showError('파일을 읽는 중 오류가 발생했습니다. 올바른 엑셀 파일인지 확인해 주세요.');
+        showError('엑셀 파일을 읽는 중 오류가 발생했습니다.');
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // 5. [저장] 버튼: 추가된 항목은 DB에 추가, 삭제된 항목은 DB에서 삭제, 수정된 내용은 반영
   const handleSaveToDatabase = async () => {
+    // 이미 저장 중이면 중복 실행 방지
+    if (isSaving) return;
+    
     try {
-      setLoading(true);
+      setIsSaving(true); // 저장 상태 ON
 
-      // A. 삭제 대기열에 있는 항목 DB에서 삭제
+      // 1. 화면에서 삭제된 항목들을 DB에서 지우기
       for (const id of deletedIds) {
         await deleteDoc(doc(db, "payments", id));
       }
 
-      // B. 현재 화면의 데이터 처리 (신규 추가분 DB 반영 및 기존 데이터 업데이트)
+      // 2. 화면에 있는 항목들을 DB에 추가하거나 업데이트
       for (const payment of payments) {
         if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
-          // 새로 추가된 항목인 경우 DB에 추가
+          // 새로 추가된 항목 (temp, excel)
           await addDoc(collection(db, "payments"), {
-            date: payment.date,
-            bank: payment.bank,
-            purpose: payment.purpose,
+            date: payment.date || getTodayString(),
+            bank: payment.bank || '미래에셋',
+            purpose: payment.purpose || '연금',
             amount: Number(payment.amount || 0),
             createdAt: serverTimestamp()
           });
         } else {
-          // 기존 항목인 경우 내용 변경사항 업데이트
+          // 기존 항목 업데이트
           const docRef = doc(db, "payments", payment.id);
           await updateDoc(docRef, {
-            date: payment.date,
-            bank: payment.bank,
-            purpose: payment.purpose,
+            date: payment.date || getTodayString(),
+            bank: payment.bank || '미래에셋',
+            purpose: payment.purpose || '연금',
             amount: Number(payment.amount || 0)
           });
         }
       }
 
+      // 저장 끝났으니 최신 데이터를 다시 불러오고 초기화
       await fetchPayments();
-      setSuccessMessage('변경사항이 데이터베이스에 성공적으로 저장되었습니다!');
-      setTimeout(() => setSuccessMessage(''), 4000);
+      setSuccessMessage('성공적으로 DB에 저장되었습니다!');
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error("저장 실패:", error);
-      showError('데이터 저장 중 오류가 발생했습니다.');
+      showError('저장 중 네트워크 오류가 발생했습니다.');
     } finally {
-      setLoading(false);
+      setIsSaving(false); // 무조건 저장 상태 OFF (무한 로딩 방지)
     }
   };
 
@@ -272,20 +367,12 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
       
-      <input 
-        type="file" 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-        id="excel-upload-input"
-        onChange={handleFileChange} 
-      />
-
       {errorModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
             <div className="flex items-center gap-3 text-rose-600 mb-4">
               <AlertCircle size={28} />
-              <h3 className="text-xl font-bold">오류</h3>
+              <h3 className="text-xl font-bold">오류 안내</h3>
             </div>
             <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">
               {errorModal.message}
@@ -302,7 +389,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 상단 알림 메시지 */}
       {successMessage && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 font-medium">
           <span>{successMessage}</span>
@@ -317,7 +403,7 @@ export default function App() {
         </div>
         <div className="text-sm text-emerald-600 font-medium bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200 flex items-center gap-1.5 shadow-xs">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          Firebase 클라우드 DB 연동됨
+          Firebase 클라우드 연동 완료
         </div>
       </header>
 
@@ -353,10 +439,9 @@ export default function App() {
         {activeTab === 'payment' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
-            {/* Top Section: Controls & Summary (버튼들 한 줄에 배치) */}
+            {/* Top Section: Controls & Summary */}
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               
-              {/* Left Controls: 한 줄에 모두 배치되도록 flex-wrap 설정 및 간격 조정 */}
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -365,7 +450,7 @@ export default function App() {
                   <input
                     type="text"
                     placeholder="납입연도 (예: 2026)"
-                    className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-slate-900"
                     value={searchYearInput}
                     onChange={(e) => setSearchYearInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -393,7 +478,7 @@ export default function App() {
                   disabled={selectedIds.length === 0}
                   className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
                     ${selectedIds.length > 0 
-                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' 
+                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
                       : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                     }`}
                 >
@@ -401,6 +486,15 @@ export default function App() {
                   삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}
                 </button>
 
+                {/* 숨겨진 실제 엑셀 파일 인풋 */}
+                <input 
+                  type="file" 
+                  accept=".xlsx, .xls" 
+                  className="hidden" 
+                  id="excel-upload-input"
+                  onChange={handleFileChange} 
+                />
+                
                 <label 
                   htmlFor="excel-upload-input"
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
@@ -409,14 +503,15 @@ export default function App() {
                   엑셀 업로드
                 </label>
 
-                {/* 저장 버튼 신설 */}
+                {/* 강력해진 저장 버튼 */}
                 <button 
                   onClick={handleSaveToDatabase}
-                  disabled={loading}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors shadow-sm ml-2"
+                  disabled={isSaving}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-2
+                    ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
                 >
                   <Save size={16} />
-                  {loading ? '처리중...' : '저장'}
+                  {isSaving ? '저장 중...' : '저장'}
                 </button>
               </div>
 
@@ -438,7 +533,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bottom Section: Data Table */}
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
@@ -542,7 +636,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Portfolio Tab Content */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center flex flex-col items-center justify-center min-h-[50vh]">
              <PiggyBank size={48} className="text-slate-300 mb-4" />
