@@ -10,7 +10,8 @@ import {
   PiggyBank,
   CheckSquare,
   AlertCircle,
-  Save
+  Save,
+  Layers
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -65,19 +66,29 @@ const parseExcelDate = (val) => {
 export default function App() {
   const [isTailwindLoaded, setIsTailwindLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('payment');
-  const [payments, setPayments] = useState([]);
   
+  // 1. 납입금액 관리 상태
+  const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
   const [selectedIds, setSelectedIds] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]);
-  
+
+  // 2. 종목 관리 상태
+  const [stocks, setStocks] = useState([]);
+  const [loadingStocks, setLoadingStocks] = useState(false);
+  const [isSavingStocks, setIsSavingStocks] = useState(false);
+  const [selectedStockIds, setSelectedStockIds] = useState([]);
+  const [deletedStockIds, setDeletedStockIds] = useState([]);
+
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
+  
   const fileInputRef = useRef(null);
+  const stockFileInputRef = useRef(null);
+  const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
     if (document.getElementById('tailwind-cdn')) {
@@ -91,6 +102,7 @@ export default function App() {
     }
 
     fetchPayments();
+    fetchStocks();
   }, []);
 
   const fetchPayments = async () => {
@@ -105,10 +117,27 @@ export default function App() {
       setPayments(dataList);
       setDeletedIds([]);
     } catch (error) {
-      console.error("데이터 불러오기 실패:", error);
+      console.error("납입 데이터 불러오기 실패:", error);
       showError(`데이터를 불러오지 못했습니다.\n(${error.message})`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchStocks = async () => {
+    try {
+      setLoadingStocks(true);
+      const querySnapshot = await getDocs(collection(db, "stocks"));
+      const dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setStocks(dataList);
+      setDeletedStockIds([]);
+    } catch (error) {
+      console.error("종목 데이터 불러오기 실패:", error);
+    } finally {
+      setLoadingStocks(false);
     }
   };
 
@@ -121,11 +150,25 @@ export default function App() {
     const newRow = {
       id: 'temp_' + Date.now(),
       date: getTodayString(),
-      bank: '미래에셋',
+      bank: '',
       purpose: '연금',
       amount: 0,
     };
     setPayments(prev => [newRow, ...prev]);
+  };
+
+  const handleAddStockRow = () => {
+    const newStockRow = {
+      id: 'temp_stock_' + Date.now(),
+      bank: '',
+      purpose: '연금',
+      code: '',
+      name: '',
+      category: '',
+      ratio: 0,
+      currency: 'KRW',
+    };
+    setStocks(prev => [...prev, newStockRow]);
   };
 
   const handleDeleteRows = () => {
@@ -136,10 +179,22 @@ export default function App() {
     setSelectedIds([]);
   };
 
-  const triggerExcelUpload = () => {
-    if (fileInputRef.current) {
+  const handleDeleteStockRows = () => {
+    if (selectedStockIds.length === 0) return;
+    const targetRealIds = selectedStockIds.filter(id => !String(id).startsWith('temp_stock_') && !String(id).startsWith('excel_stock_'));
+    setDeletedStockIds(prev => [...prev, ...targetRealIds]);
+    setStocks(prev => prev.filter(s => !selectedStockIds.includes(s.id)));
+    setSelectedStockIds([]);
+  };
+
+  const triggerExcelUpload = (type) => {
+    setActiveUploadType(type);
+    if (type === 'payment' && fileInputRef.current) {
       fileInputRef.current.value = "";
       fileInputRef.current.click();
+    } else if (type === 'stock' && stockFileInputRef.current) {
+      stockFileInputRef.current.value = "";
+      stockFileInputRef.current.click();
     }
   };
 
@@ -178,40 +233,87 @@ export default function App() {
         }
 
         const headers = jsonData[0];
-        const requiredColumns = ['납입일자', '은행', '목적', '금액'];
-        const missingColumns = requiredColumns.filter(col => !headers.includes(col));
-        
-        if (missingColumns.length > 0) {
-          showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '납입일자', '은행', '목적', '금액' 열이 있어야 합니다.)`);
-          return;
+
+        if (activeUploadType === 'payment') {
+          const requiredColumns = ['납입일자', '은행', '목적', '금액'];
+          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+          
+          if (missingColumns.length > 0) {
+            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '납입일자', '은행', '목적', '금액' 열이 있어야 합니다.)`);
+            return;
+          }
+
+          const colIndices = {
+            date: headers.indexOf('납입일자'),
+            bank: headers.indexOf('은행'),
+            purpose: headers.indexOf('목적'),
+            amount: headers.indexOf('금액'),
+          };
+
+          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
+          
+          const excelRows = dataRows.map((row, index) => {
+            const rawDate = row[colIndices.date];
+            const parsedDate = parseExcelDate(rawDate);
+            const rawAmount = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
+            const amountNum = parseInt(rawAmount, 10) || 0;
+
+            return {
+              id: 'excel_' + Date.now() + '_' + index,
+              date: parsedDate,
+              bank: String(row[colIndices.bank] || '').trim(),
+              purpose: String(row[colIndices.purpose] || '연금').trim(),
+              amount: amountNum,
+            };
+          });
+
+          setPayments(prev => [...excelRows, ...prev]);
+          setSuccessMessage('납입금액 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
+        } else {
+          // 종목 관리 엑셀 업로드 [은행, 목적, 종목코드, 종목명, 종목 유형, 유형 비율, 통화]
+          const requiredColumns = ['은행', '목적', '종목코드', '종목명', '종목 유형', '유형 비율', '통화'];
+          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+          
+          if (missingColumns.length > 0) {
+            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '은행', '목적', '종목코드', '종목명', '종목 유형', '유형 비율', '통화' 열이 있어야 합니다.)`);
+            return;
+          }
+
+          const colIndices = {
+            bank: headers.indexOf('은행'),
+            purpose: headers.indexOf('목적'),
+            code: headers.indexOf('종목코드'),
+            name: headers.indexOf('종목명'),
+            category: headers.indexOf('종목 유형'),
+            ratio: headers.indexOf('유형 비율'),
+            currency: headers.indexOf('통화'),
+          };
+
+          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
+          
+          const excelRows = dataRows.map((row, index) => {
+            const rawRatio = String(row[colIndices.ratio] || '0').replace(/[^0-9.]/g, '');
+            const ratioNum = parseFloat(rawRatio) || 0;
+            const bankVal = String(row[colIndices.bank] || '').trim();
+            const purposeVal = String(row[colIndices.purpose] || '연금').trim();
+            const validPurpose = ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금';
+
+            return {
+              id: 'excel_stock_' + Date.now() + '_' + index,
+              bank: bankVal,
+              purpose: validPurpose,
+              code: String(row[colIndices.code] || '').trim(),
+              name: String(row[colIndices.name] || '').trim(),
+              category: String(row[colIndices.category] || '').trim(),
+              ratio: ratioNum,
+              currency: String(row[colIndices.currency] || 'KRW').trim(),
+            };
+          });
+
+          setStocks(prev => [...excelRows, ...prev]);
+          setSuccessMessage('종목 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         }
 
-        const colIndices = {
-          date: headers.indexOf('납입일자'),
-          bank: headers.indexOf('은행'),
-          purpose: headers.indexOf('목적'),
-          amount: headers.indexOf('금액'),
-        };
-
-        const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
-        
-        const excelRows = dataRows.map((row, index) => {
-          const rawDate = row[colIndices.date];
-          const parsedDate = parseExcelDate(rawDate);
-          const rawAmount = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
-          const amountNum = parseInt(rawAmount, 10) || 0;
-
-          return {
-            id: 'excel_' + Date.now() + '_' + index,
-            date: parsedDate,
-            bank: String(row[colIndices.bank] || '기타').trim(),
-            purpose: String(row[colIndices.purpose] || '기타').trim(),
-            amount: amountNum,
-          };
-        });
-
-        setPayments(prev => [...excelRows, ...prev]);
-        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         setTimeout(() => setSuccessMessage(''), 4000);
       } catch (err) {
         console.error(err);
@@ -225,10 +327,8 @@ export default function App() {
     if (isSaving) return;
     
     setIsSaving(true);
-    console.log("=== 저장 작업 시작 (Batch 방식) ===");
-
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 30000)
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
     );
 
     const saveExecution = async () => {
@@ -244,7 +344,7 @@ export default function App() {
           const newDocRef = doc(collection(db, "payments"));
           batch.set(newDocRef, {
             date: payment.date || getTodayString(),
-            bank: payment.bank || '미래에셋',
+            bank: payment.bank || '',
             purpose: payment.purpose || '연금',
             amount: Number(payment.amount || 0),
             createdAt: serverTimestamp()
@@ -253,7 +353,7 @@ export default function App() {
           const docRef = doc(db, "payments", payment.id);
           batch.update(docRef, {
             date: payment.date || getTodayString(),
-            bank: payment.bank || '미래에셋',
+            bank: payment.bank || '',
             purpose: payment.purpose || '연금',
             amount: Number(payment.amount || 0)
           });
@@ -266,14 +366,72 @@ export default function App() {
     try {
       await Promise.race([saveExecution(), timeoutPromise]);
       await fetchPayments();
-      setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
+      setSuccessMessage('납입금액 데이터가 성공적으로 저장되었습니다!');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error("저장 중 에러 발생:", error);
       showError(`저장 실패: ${error.message}`);
     } finally {
       setIsSaving(false);
-      console.log("=== 저장 작업 종료 (로딩 해제 완료) ===");
+    }
+  };
+
+  const handleSaveStocksToDatabase = async () => {
+    if (isSavingStocks) return;
+    
+    setIsSavingStocks(true);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다.")), 30000)
+    );
+
+    const saveExecution = async () => {
+      const batch = writeBatch(db);
+
+      for (const id of deletedStockIds) {
+        const docRef = doc(db, "stocks", id);
+        batch.delete(docRef);
+      }
+
+      for (const stock of stocks) {
+        if (String(stock.id).startsWith('temp_stock_') || String(stock.id).startsWith('excel_stock_')) {
+          const newDocRef = doc(collection(db, "stocks"));
+          batch.set(newDocRef, {
+            bank: stock.bank || '',
+            purpose: stock.purpose || '연금',
+            code: stock.code || '',
+            name: stock.name || '',
+            category: stock.category || '',
+            ratio: Number(stock.ratio || 0),
+            currency: stock.currency || 'KRW',
+            createdAt: serverTimestamp()
+          });
+        } else {
+          const docRef = doc(db, "stocks", stock.id);
+          batch.update(docRef, {
+            bank: stock.bank || '',
+            purpose: stock.purpose || '연금',
+            code: stock.code || '',
+            name: stock.name || '',
+            category: stock.category || '',
+            ratio: Number(stock.ratio || 0),
+            currency: stock.currency || 'KRW'
+          });
+        }
+      }
+
+      await batch.commit();
+    };
+
+    try {
+      await Promise.race([saveExecution(), timeoutPromise]);
+      await fetchStocks();
+      setSuccessMessage('종목 관리 데이터가 성공적으로 저장되었습니다!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (error) {
+      console.error("종목 저장 중 에러 발생:", error);
+      showError(`저장 실패: ${error.message}`);
+    } finally {
+      setIsSavingStocks(false);
     }
   };
 
@@ -286,8 +444,23 @@ export default function App() {
     }));
   };
 
+  const handleStockRowChange = (id, field, value) => {
+    setStocks(prev => prev.map(stock => {
+      if (stock.id === id) {
+        return { ...stock, [field]: value };
+      }
+      return stock;
+    }));
+  };
+
   const toggleSelection = (id) => {
     setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleStockSelection = (id) => {
+    setSelectedStockIds(prev => 
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
@@ -302,6 +475,14 @@ export default function App() {
       setSelectedIds(filteredPayments.map(p => p.id));
     } else {
       setSelectedIds([]);
+    }
+  };
+
+  const handleSelectAllStocks = (e) => {
+    if (e.target.checked) {
+      setSelectedStockIds(stocks.map(s => s.id));
+    } else {
+      setSelectedStockIds([]);
     }
   };
 
@@ -329,6 +510,14 @@ export default function App() {
         accept=".xlsx, .xls" 
         className="hidden" 
         ref={fileInputRef} 
+        onChange={handleFileChange} 
+      />
+
+      <input 
+        type="file" 
+        accept=".xlsx, .xls" 
+        className="hidden" 
+        ref={stockFileInputRef} 
         onChange={handleFileChange} 
       />
 
@@ -373,6 +562,7 @@ export default function App() {
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         
+        {/* Tab Navigation */}
         <div className="flex space-x-1 border-b border-slate-200 mb-6">
           <button
             onClick={() => setActiveTab('payment')}
@@ -384,6 +574,17 @@ export default function App() {
           >
             <Wallet size={18} />
             납입금액 관리
+          </button>
+          <button
+            onClick={() => setActiveTab('stock')}
+            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors duration-200
+              ${activeTab === 'stock' 
+                ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' 
+                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+              }`}
+          >
+            <Layers size={18} />
+            종목 관리
           </button>
           <button
             onClick={() => setActiveTab('portfolio')}
@@ -398,6 +599,7 @@ export default function App() {
           </button>
         </div>
 
+        {/* 1. 납입금액 관리 탭 */}
         {activeTab === 'payment' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
@@ -448,7 +650,7 @@ export default function App() {
                 </button>
 
                 <button 
-                  onClick={triggerExcelUpload}
+                  onClick={() => triggerExcelUpload('payment')}
                   className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
                 >
                   <FileSpreadsheet size={16} className="text-green-600" />
@@ -529,16 +731,13 @@ export default function App() {
                           />
                         </td>
                         <td className="py-2 px-4">
-                          <select 
-                            value={row.bank || '미래에셋'}
+                          <input 
+                            type="text" 
+                            value={row.bank || ''}
                             onChange={(e) => handleRowChange(row.id, 'bank', e.target.value)}
+                            placeholder="은행 입력"
                             className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                          >
-                            <option value="미래에셋">미래에셋</option>
-                            <option value="KB증권">KB증권</option>
-                            <option value="삼성증권">삼성증권</option>
-                            <option value="기타">기타</option>
-                          </select>
+                          />
                         </td>
                         <td className="py-2 px-4">
                           <select 
@@ -586,6 +785,193 @@ export default function App() {
           </div>
         )}
 
+        {/* 2. 종목 관리 탭 */}
+        {activeTab === 'stock' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
+              
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button 
+                  onClick={fetchStocks}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+                >
+                  <Search size={16} />
+                  조회
+                </button>
+
+                <button 
+                  onClick={handleAddStockRow}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors shadow-sm"
+                >
+                  <Plus size={16} />
+                  추가
+                </button>
+
+                <button 
+                  onClick={handleDeleteStockRows}
+                  disabled={selectedStockIds.length === 0}
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm
+                    ${selectedStockIds.length > 0 
+                      ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 text-rose-600' 
+                      : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    }`}
+                >
+                  <Trash2 size={16} />
+                  삭제 {selectedStockIds.length > 0 && `(${selectedStockIds.length})`}
+                </button>
+
+                <button 
+                  onClick={() => triggerExcelUpload('stock')}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <FileSpreadsheet size={16} className="text-green-600" />
+                  엑셀 업로드
+                </button>
+
+                <button 
+                  onClick={handleSaveStocksToDatabase}
+                  disabled={isSavingStocks}
+                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
+                    ${isSavingStocks ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+                >
+                  <Save size={16} />
+                  {isSavingStocks ? '저장 중...' : '저장'}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm">
+                <span className="text-xs text-slate-500 font-medium">등록된 종목 수:</span>
+                <span className="text-base font-bold text-slate-800">{stocks.length} 개</span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
+                        checked={stocks.length > 0 && selectedStockIds.length === stocks.length}
+                        onChange={handleSelectAllStocks}
+                      />
+                    </th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-44">은행</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-44">목적</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">종목코드</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-40">종목 유형</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">유형 비율 (%)</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-center">통화</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {loadingStocks && stocks.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="py-16 text-center text-slate-400">종목 데이터를 불러오는 중입니다...</td>
+                    </tr>
+                  ) : stocks.length > 0 ? (
+                    stocks.map((stock) => (
+                      <tr 
+                        key={stock.id} 
+                        className={`hover:bg-slate-50 transition-colors ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}
+                      >
+                        <td className="py-3 px-4 w-12">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600 cursor-pointer"
+                            checked={selectedStockIds.includes(stock.id)}
+                            onChange={() => toggleStockSelection(stock.id)}
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="text" 
+                            value={stock.bank || ''}
+                            onChange={(e) => handleStockRowChange(stock.id, 'bank', e.target.value)}
+                            placeholder="은행 입력"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <select 
+                            value={stock.purpose || '연금'}
+                            onChange={(e) => handleStockRowChange(stock.id, 'purpose', e.target.value)}
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          >
+                            <option value="연금">연금</option>
+                            <option value="IRP">IRP</option>
+                            <option value="DC">DC</option>
+                            <option value="기타">기타</option>
+                          </select>
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="text" 
+                            value={stock.code || ''}
+                            onChange={(e) => handleStockRowChange(stock.id, 'code', e.target.value)}
+                            placeholder="종목코드"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="text" 
+                            value={stock.name || ''}
+                            onChange={(e) => handleStockRowChange(stock.id, 'name', e.target.value)}
+                            placeholder="종목명"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="text" 
+                            value={stock.category || ''}
+                            onChange={(e) => handleStockRowChange(stock.id, 'category', e.target.value)}
+                            placeholder="종목 유형"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="number" 
+                            value={stock.ratio || 0}
+                            onChange={(e) => handleStockRowChange(stock.id, 'ratio', e.target.value)}
+                            placeholder="0"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                        <td className="py-2 px-4">
+                          <input 
+                            type="text" 
+                            value={stock.currency || 'KRW'}
+                            onChange={(e) => handleStockRowChange(stock.id, 'currency', e.target.value)}
+                            placeholder="KRW"
+                            className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
+                          />
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="8" className="py-16 text-center text-slate-500">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <CheckSquare size={32} className="text-slate-300" />
+                          <p>등록된 종목 내역이 없습니다.</p>
+                          <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 3. 포트폴리오 현황 탭 */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center flex flex-col items-center justify-center min-h-[50vh]">
              <PiggyBank size={48} className="text-slate-300 mb-4" />
