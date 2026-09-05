@@ -13,8 +13,7 @@ import {
   Save
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { db, auth } from './firebase';
-import { signInAnonymously } from 'firebase/auth';
+import { db } from './firebase';
 import { 
   collection, 
   getDocs, 
@@ -64,6 +63,7 @@ const parseExcelDate = (val) => {
 };
 
 export default function App() {
+  const [isTailwindLoaded, setIsTailwindLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('payment');
   const [payments, setPayments] = useState([]);
   
@@ -79,21 +79,18 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState('');
   const fileInputRef = useRef(null);
 
-  // 1. 앱 실행 시 인증이 끝날 때까지 확실히 기다린 후 데이터 로드
   useEffect(() => {
-    const initApp = async () => {
-      try {
-        if (auth) {
-          await signInAnonymously(auth);
-          console.log("🔥 Firebase 익명 인증 완료");
-        }
-      } catch (authErr) {
-        console.warn("⚠️ 인증 경고:", authErr);
-      }
-      await fetchPayments();
-    };
+    if (document.getElementById('tailwind-cdn')) {
+      setIsTailwindLoaded(true);
+    } else {
+      const script = document.createElement('script');
+      script.id = 'tailwind-cdn';
+      script.src = 'https://cdn.tailwindcss.com';
+      script.onload = () => setIsTailwindLoaded(true);
+      document.head.appendChild(script);
+    }
 
-    initApp();
+    fetchPayments();
   }, []);
 
   const fetchPayments = async () => {
@@ -224,28 +221,24 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // 2. 저장 버튼: 인증 보장 상태에서 Batch 일괄 처리 실행
   const handleSaveToDatabase = async () => {
     if (isSaving) return;
     
     setIsSaving(true);
-    console.log("=== 저장 작업 시작 ===");
+    console.log("=== 저장 작업 시작 (Batch 방식) ===");
 
-    try {
-      // 저장 전 인증 상태 재확인
-      if (auth && !auth.currentUser) {
-        await signInAnonymously(auth);
-      }
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 30000)
+    );
 
+    const saveExecution = async () => {
       const batch = writeBatch(db);
 
-      // 삭제 대기열 처리
       for (const id of deletedIds) {
         const docRef = doc(db, "payments", id);
         batch.delete(docRef);
       }
 
-      // 추가 및 수정 처리
       for (const payment of payments) {
         if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
           const newDocRef = doc(collection(db, "payments"));
@@ -268,6 +261,10 @@ export default function App() {
       }
 
       await batch.commit();
+    };
+
+    try {
+      await Promise.race([saveExecution(), timeoutPromise]);
       await fetchPayments();
       setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
       setTimeout(() => setSuccessMessage(''), 3000);
@@ -276,7 +273,7 @@ export default function App() {
       showError(`저장 실패: ${error.message}`);
     } finally {
       setIsSaving(false);
-      console.log("=== 저장 작업 종료 ===");
+      console.log("=== 저장 작업 종료 (로딩 해제 완료) ===");
     }
   };
 
@@ -291,7 +288,7 @@ export default function App() {
 
   const toggleSelection = (id) => {
     setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(item !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
 
@@ -316,6 +313,14 @@ export default function App() {
     return filteredPayments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
   }, [filteredPayments]);
 
+  if (!isTailwindLoaded) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'sans-serif', color: '#64748b' }}>
+        화면을 준비 중입니다...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
       
@@ -323,7 +328,6 @@ export default function App() {
         type="file" 
         accept=".xlsx, .xls" 
         className="hidden" 
-        id="excel-upload-input"
         ref={fileInputRef} 
         onChange={handleFileChange} 
       />
@@ -443,13 +447,13 @@ export default function App() {
                   삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}
                 </button>
 
-                <label 
-                  htmlFor="excel-upload-input"
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm cursor-pointer"
+                <button 
+                  onClick={triggerExcelUpload}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
                 >
                   <FileSpreadsheet size={16} className="text-green-600" />
                   엑셀 업로드
-                </label>
+                </button>
 
                 <button 
                   onClick={handleSaveToDatabase}
@@ -569,7 +573,7 @@ export default function App() {
                     <tr>
                       <td colSpan="5" className="py-16 text-center text-slate-500">
                         <div className="flex flex-col items-center justify-center gap-2">
-                      <CheckSquare size={32} className="text-slate-300" />
+                          <CheckSquare size={32} className="text-slate-300" />
                           <p>조회된 납입 내역이 없습니다.</p>
                           <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
                         </div>
