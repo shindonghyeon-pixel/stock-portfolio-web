@@ -163,6 +163,91 @@ export default function App() {
   const chartCanvasRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
+  // ==================== [useMemo 정의를 최상단으로 이동] ====================
+  const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+  const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+
+  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
+  
+  const filteredStocks = useMemo(() => {
+    return [...stocks].sort((a, b) => {
+      const bankA = (a.bank || '').trim();
+      const bankB = (b.bank || '').trim();
+      if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
+      const purposeA = (a.purpose || '').trim();
+      const purposeB = (b.purpose || '').trim();
+      if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
+      const codeA = (a.code || '').trim();
+      const codeB = (b.code || '').trim();
+      return codeA.localeCompare(codeB, 'ko');
+    });
+  }, [stocks]);
+
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      if (!t.date) return true;
+      if (appliedTxStartDate && t.date < appliedTxStartDate) return false;
+      if (appliedTxEndDate && t.date > appliedTxEndDate) return false;
+      return true;
+    }).sort((a, b) => {
+      if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
+      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      return (a.code || '').localeCompare(b.code || '', 'ko');
+    });
+  }, [transactions, appliedTxStartDate, appliedTxEndDate]);
+
+  const filteredPortfolios = useMemo(() => portfolios.filter(pf => {
+    if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
+    if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
+    if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
+    return true;
+  }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
+
+  const trendTotalPayment = useMemo(() => {
+    if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
+    
+    const inRangeSum = payments
+      .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+    const priorPortfolios = portfolios.filter(p => p.baseDate && p.baseDate < appliedTrendStartDate);
+    if (priorPortfolios.length > 0) {
+      const dates = Array.from(new Set(priorPortfolios.map(p => p.baseDate))).sort((a, b) => b.localeCompare(a));
+      const nearestPfDate = dates[0];
+      const itemsForNearestDate = portfolios.filter(p => p.baseDate === nearestPfDate);
+      const pfTotalAmount = itemsForNearestDate.reduce((sum, p) => {
+        const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
+        const mult = isUSD ? exchangeRate : 1;
+        return sum + (Number(p.currentAmount || 0) * mult);
+      }, 0);
+      return inRangeSum + pfTotalAmount;
+    }
+
+    const priorTrends = trendRows.filter(t => t.date && t.date < appliedTrendStartDate);
+    if (priorTrends.length > 0) {
+      const sortedPriorTrends = [...priorTrends].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const nearestTrendAmount = Number(sortedPriorTrends[0].amount || 0);
+      return inRangeSum + nearestTrendAmount;
+    }
+
+    return inRangeSum;
+  }, [payments, portfolios, trendRows, appliedTrendStartDate, appliedTrendEndDate, exchangeRate]);
+
+  const trendTargetAmount = useMemo(() => {
+    const rate = Number(trendProfitRateInput || 0);
+    return trendTotalPayment * (1 + rate);
+  }, [trendTotalPayment, trendProfitRateInput]);
+
+  const sortedTrendRows = useMemo(() => {
+    const filtered = trendRows.filter(tr => {
+      if (!appliedTrendStartDate || !appliedTrendEndDate) return true;
+      return tr.date && tr.date >= appliedTrendStartDate && tr.date <= appliedTrendEndDate;
+    });
+    return [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [trendRows, appliedTrendStartDate, appliedTrendEndDate]);
+  // ====================================================================
+
   useEffect(() => {
     if (document.getElementById('tailwind-cdn')) {
       setIsTailwindLoaded(true);
@@ -190,10 +275,8 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // 데이터 준비 (오름차순 정렬: 과거 -> 최신)
     const chartData = [...sortedTrendRows].reverse();
     
-    // 캔버스 크기 설정
     const width = canvas.parentElement.clientWidth || 700;
     const height = 350;
     canvas.width = width * window.devicePixelRatio;
@@ -219,7 +302,6 @@ export default function App() {
     const maxAmt = Math.max(...amounts, 100);
     const amtRange = maxAmt - minAmt || 1;
 
-    // 그리드 및 축 라인 그리기
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1;
 
@@ -239,14 +321,12 @@ export default function App() {
       ctx.fillText(formatCurrency(yVal), padding - 10, yPos + 4);
     }
 
-    // 포인트 좌표 계산
     const points = chartData.map((d, index) => {
       const x = chartData.length === 1 ? width / 2 : padding + (graphWidth * index) / (chartData.length - 1);
       const y = height - padding - (graphHeight * (Number(d.amount || 0) - minAmt)) / amtRange;
       return { x, y, date: d.date, amount: Number(d.amount || 0) };
     });
 
-    // 꺾은선 그리기
     ctx.strokeStyle = '#4f46e5';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
@@ -256,9 +336,7 @@ export default function App() {
     });
     ctx.stroke();
 
-    // 데이터 포인트 및 X축 라벨 그리기
     points.forEach((p, idx) => {
-      // 포인트 원
       ctx.fillStyle = '#ffffff';
       ctx.strokeStyle = '#4f46e5';
       ctx.lineWidth = 2;
@@ -267,7 +345,6 @@ export default function App() {
       ctx.fill();
       ctx.stroke();
 
-      // X축 날짜 라벨 (너무 많으면 간격 조절 또는 전체 표시)
       if (chartData.length <= 10 || idx % Math.ceil(chartData.length / 10) === 0 || idx === chartData.length - 1) {
         ctx.fillStyle = '#64748b';
         ctx.font = '10px sans-serif';
@@ -999,89 +1076,6 @@ export default function App() {
   const handleTrendRowChange = (id, field, val) => {
     setTrendRows(prev => prev.map(tr => tr.id === id ? { ...tr, [field]: val } : tr));
   };
-
-  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
-  
-  const filteredStocks = useMemo(() => {
-    return [...stocks].sort((a, b) => {
-      const bankA = (a.bank || '').trim();
-      const bankB = (b.bank || '').trim();
-      if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
-      const purposeA = (a.purpose || '').trim();
-      const purposeB = (b.purpose || '').trim();
-      if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
-      const codeA = (a.code || '').trim();
-      const codeB = (b.code || '').trim();
-      return codeA.localeCompare(codeB, 'ko');
-    });
-  }, [stocks]);
-
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter(t => {
-      if (!t.date) return true;
-      if (appliedTxStartDate && t.date < appliedTxStartDate) return false;
-      if (appliedTxEndDate && t.date > appliedTxEndDate) return false;
-      return true;
-    }).sort((a, b) => {
-      if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
-      return (a.code || '').localeCompare(b.code || '', 'ko');
-    });
-  }, [transactions, appliedTxStartDate, appliedTxEndDate]);
-
-  const filteredPortfolios = useMemo(() => portfolios.filter(pf => {
-    if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
-    if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
-    if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
-    return true;
-  }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
-
-  const trendTotalPayment = useMemo(() => {
-    if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
-    
-    const inRangeSum = payments
-      .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
-
-    const priorPortfolios = portfolios.filter(p => p.baseDate && p.baseDate < appliedTrendStartDate);
-    if (priorPortfolios.length > 0) {
-      const dates = Array.from(new Set(priorPortfolios.map(p => p.baseDate))).sort((a, b) => b.localeCompare(a));
-      const nearestPfDate = dates[0];
-      const itemsForNearestDate = portfolios.filter(p => p.baseDate === nearestPfDate);
-      const pfTotalAmount = itemsForNearestDate.reduce((sum, p) => {
-        const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
-        const mult = isUSD ? exchangeRate : 1;
-        return sum + (Number(p.currentAmount || 0) * mult);
-      }, 0);
-      return inRangeSum + pfTotalAmount;
-    }
-
-    const priorTrends = trendRows.filter(t => t.date && t.date < appliedTrendStartDate);
-    if (priorTrends.length > 0) {
-      const sortedPriorTrends = [...priorTrends].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-      const nearestTrendAmount = Number(sortedPriorTrends[0].amount || 0);
-      return inRangeSum + nearestTrendAmount;
-    }
-
-    return inRangeSum;
-  }, [payments, portfolios, trendRows, appliedTrendStartDate, appliedTrendEndDate, exchangeRate]);
-
-  const trendTargetAmount = useMemo(() => {
-    const rate = Number(trendProfitRateInput || 0);
-    return trendTotalPayment * (1 + rate);
-  }, [trendTotalPayment, trendProfitRateInput]);
-
-  const sortedTrendRows = useMemo(() => {
-    const filtered = trendRows.filter(tr => {
-      if (!appliedTrendStartDate || !appliedTrendEndDate) return true;
-      return tr.date && tr.date >= appliedTrendStartDate && tr.date <= appliedTrendEndDate;
-    });
-    return [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [trendRows, appliedTrendStartDate, appliedTrendEndDate]);
-
-  const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
-  const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
 
   if (!isTailwindLoaded) return <div className="flex justify-center items-center h-screen text-slate-500 font-sans">준비 중...</div>;
 
