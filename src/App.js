@@ -50,11 +50,9 @@ const formatCurrency = (amount, currency = 'KRW') => {
   return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
 };
 
-// 엑셀 날짜 파싱 로직 개선 (시리얼 번호 및 다양한 포맷 정밀 대응)
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
   
-  // 엑셀 날짜 숫자 시리얼 번호인 경우
   if (typeof val === 'number') {
     const utcDays = Math.floor(val - 25569);
     const utcValue = utcDays * 86400;
@@ -69,7 +67,6 @@ const parseExcelDate = (val) => {
 
   if (typeof val === 'string') {
     let clean = val.trim();
-    // 엑셀에서 날짜가 숫자로 파싱되어 들어온 문자열인 경우 처리
     if (/^\d{5}$/.test(clean)) {
       const numVal = parseInt(clean, 10);
       const utcDays = Math.floor(numVal - 25569);
@@ -708,7 +705,7 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -746,23 +743,42 @@ export default function App() {
           setStocks(prev => [...excelRows, ...prev]);
         } else if (activeUploadType === 'trend') {
           const uploadedRows = dataRows.map((row, index) => {
-            const dt = parseExcelDate(row[0]); // 첫 번째 열 (일자)
-            const amt = parseFloat(String(row[1] || '0').replace(/[^0-9.]/g, '')) || 0; // 두 번째 열 (금액)
+            const dt = parseExcelDate(row[0]);
+            const amt = parseFloat(String(row[1] || '0').replace(/[^0-9.]/g, '')) || 0;
             return {
-              id: 'excel_trend_' + Date.now() + '_' + index,
+              id: 'trend_excel_' + Date.now() + '_' + index,
               date: dt,
               amount: amt
             };
           });
 
+          // 화면 상태 업데이트 (동일 일자 변경 반영)
+          let updatedTrendList = [];
           setTrendRows(prev => {
             const map = new Map();
             prev.forEach(r => map.set(r.date, r));
             uploadedRows.forEach(r => {
               map.set(r.date, { ...r, id: map.has(r.date) ? map.get(r.date).id : r.id });
             });
-            return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+            updatedTrendList = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+            return updatedTrendList;
           });
+
+          // 엑셀 업로드 직후 DB(Firestore trends 컬렉션)에 바로 자동 반영
+          try {
+            const batch = writeBatch(db);
+            uploadedRows.forEach(tr => {
+              // 기존에 동일 날짜 데이터가 있는지 확인하여 업서트 처리
+              const existingRef = doc(collection(db, "trends"));
+              batch.set(existingRef, { date: tr.date, amount: Number(tr.amount || 0), createdAt: serverTimestamp() }, { merge: true });
+            });
+            await batch.commit();
+            await fetchTrends();
+            setSuccessMessage('총액 Trend 엑셀 업로드 및 DB 반영이 완료되었습니다.');
+          } catch (dbErr) {
+            console.error("DB 자동 저장 실패:", dbErr);
+            setSuccessMessage('엑셀이 로드되었으나 DB 자동 저장 중 오류가 발생했습니다.');
+          }
         } else {
           const excelRows = dataRows.map((row, index) => {
             const bankVal = String(row[headers.indexOf('은행')] || '').trim();
@@ -784,7 +800,6 @@ export default function App() {
           });
           setTransactions(prev => [...excelRows, ...prev]);
         }
-        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         setTimeout(() => setSuccessMessage(''), 3000);
       } catch (err) {
         showError('엑셀 파일을 읽는 중 오류가 발생했습니다.');
