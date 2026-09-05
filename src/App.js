@@ -640,7 +640,6 @@ export default function App() {
           }));
           setStocks(prev => [...excelRows, ...prev]);
         } else if (activeUploadType === 'trend') {
-          // 포트폴리오 현황에 존재하는 일자(baseDate)와 현재금액 총액 목록 추출
           const portfolioDateAmountMap = new Map();
           const uniquePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean)));
           
@@ -654,7 +653,6 @@ export default function App() {
             portfolioDateAmountMap.set(dt, totalAmt);
           });
 
-          // 엑셀 업로드 데이터 파싱
           const rawUploadedRows = dataRows.map((row, index) => {
             const dt = parseExcelDate(row[0]);
             const amt = parseFloat(String(row[1] || '0').replace(/[^0-9.]/g, '')) || 0;
@@ -665,11 +663,9 @@ export default function App() {
             };
           });
 
-          // 포트폴리오 계산된 일자 및 금액과 동일한 행은 제외(삭제)
           const uploadedRows = rawUploadedRows.filter(row => {
             if (portfolioDateAmountMap.has(row.date)) {
               const pfAmt = portfolioDateAmountMap.get(row.date);
-              // 일자와 금액이 모두 일치하면 제외
               if (Math.abs(pfAmt - row.amount) < 1) {
                 return false;
               }
@@ -937,7 +933,7 @@ export default function App() {
       return true;
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(a.bank || '', 'ko');
+      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
       if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
@@ -950,25 +946,39 @@ export default function App() {
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
+  // 수정된 납입 총액(trendTotalPayment) 계산 로직
   const trendTotalPayment = useMemo(() => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
     
+    // 1번 로직: 조회 기간 내 납입금액 합산
     const inRangeSum = payments
       .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-    const priorPayments = payments.filter(p => p.date && p.date < appliedTrendStartDate);
-    let priorSum = 0;
-    if (priorPayments.length > 0) {
-      priorPayments.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-      const nearestDate = priorPayments[0].date;
-      priorSum = payments
-        .filter(p => p.date && p.date <= nearestDate)
-        .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    // 2번 로직: 조회시작일 이전 포트폴리오 현황 확인
+    const priorPortfolios = portfolios.filter(p => p.baseDate && p.baseDate < appliedTrendStartDate);
+    if (priorPortfolios.length > 0) {
+      const dates = Array.from(new Set(priorPortfolios.map(p => p.baseDate))).sort((a, b) => b.localeCompare(a));
+      const nearestPfDate = dates[0];
+      const itemsForNearestDate = portfolios.filter(p => p.baseDate === nearestPfDate);
+      const pfTotalAmount = itemsForNearestDate.reduce((sum, p) => {
+        const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
+        const mult = isUSD ? exchangeRate : 1;
+        return sum + (Number(p.currentAmount || 0) * mult);
+      }, 0);
+      return inRangeSum + pfTotalAmount;
     }
 
-    return inRangeSum + priorSum;
-  }, [payments, appliedTrendStartDate, appliedTrendEndDate]);
+    // 3번 로직: 포트폴리오 현황이 없고 총액 Trend(엑셀 업로드 등) 데이터가 있는 경우
+    const priorTrends = trendRows.filter(t => t.date && t.date < appliedTrendStartDate);
+    if (priorTrends.length > 0) {
+      const sortedPriorTrends = [...priorTrends].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      const nearestTrendAmount = Number(sortedPriorTrends[0].amount || 0);
+      return inRangeSum + nearestTrendAmount;
+    }
+
+    return inRangeSum;
+  }, [payments, portfolios, trendRows, appliedTrendStartDate, appliedTrendEndDate, exchangeRate]);
 
   const trendTargetAmount = useMemo(() => {
     const rate = Number(trendProfitRateInput || 0);
