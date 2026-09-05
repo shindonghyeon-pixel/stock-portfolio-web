@@ -50,21 +50,42 @@ const formatCurrency = (amount, currency = 'KRW') => {
   return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
 };
 
+// 엑셀 날짜 파싱 로직 개선 (시리얼 번호 및 다양한 포맷 정밀 대응)
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
+  
+  // 엑셀 날짜 숫자 시리얼 번호인 경우
   if (typeof val === 'number') {
-    const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-    const y = date.getUTCFullYear();
-    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(date.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    const utcDays = Math.floor(val - 25569);
+    const utcValue = utcDays * 86400;
+    const dateInfo = new Date(utcValue * 1000);
+    const y = dateInfo.getUTCFullYear();
+    const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(dateInfo.getUTCDate()).padStart(2, '0');
+    if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+      return `${y}-${m}-${d}`;
+    }
   }
+
   if (typeof val === 'string') {
-    let clean = val.trim().replace(/[\.\/]/g, '-');
-    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
-      const parts = clean.split('-');
+    let clean = val.trim();
+    // 엑셀에서 날짜가 숫자로 파싱되어 들어온 문자열인 경우 처리
+    if (/^\d{5}$/.test(clean)) {
+      const numVal = parseInt(clean, 10);
+      const utcDays = Math.floor(numVal - 25569);
+      const dateInfo = new Date(utcDays * 86400 * 1000);
+      const y = dateInfo.getUTCFullYear();
+      const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateInfo.getUTCDate()).padStart(2, '0');
+      if (!isNaN(y)) return `${y}-${m}-${d}`;
+    }
+
+    let normalized = clean.replace(/[\.\/]/g, '-');
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
+      const parts = normalized.split('-');
       return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
     }
+    
     const parsed = new Date(clean);
     if (!isNaN(parsed.getTime())) {
       const y = parsed.getFullYear();
@@ -127,7 +148,7 @@ export default function App() {
   const [trendEndDate, setTrendEndDate] = useState(getTodayString());
   const [appliedTrendStartDate, setAppliedTrendStartDate] = useState(getYearFirstDayString());
   const [appliedTrendEndDate, setAppliedTrendEndDate] = useState(getTodayString());
-  const [trendProfitRateInput, setTrendProfitRateInput] = useState(0.08); // 기본값 0.08
+  const [trendProfitRateInput, setTrendProfitRateInput] = useState(0.08);
   const [trendRows, setTrendRows] = useState([]);
   const [selectedTrendIds, setSelectedTrendIds] = useState([]);
   const [deletedTrendIds, setDeletedTrendIds] = useState([]);
@@ -458,11 +479,9 @@ export default function App() {
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
 
-    // 포트폴리오 데이터에서 존재하는 모든 기준일자 집합 추출 (날짜 오름차순 정렬)
     const availablePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean))).sort();
 
-    // 월별로 그룹화하여 데이터가 존재하는 날짜들을 관리
-    const monthlyDataMap = new Map(); // "YYYY-MM" -> [dateStr1, dateStr2, ...]
+    const monthlyDataMap = new Map();
     availablePortfolioDates.forEach(dt => {
       const ym = dt.substring(0, 7);
       if (!monthlyDataMap.has(ym)) {
@@ -473,7 +492,6 @@ export default function App() {
 
     const targetDatesSet = new Set();
 
-    // 시작일부터 종료일까지의 월들을 순회하며 조건에 맞는 날짜 추출
     let currIter = new Date(start.getFullYear(), start.getMonth(), 1);
     const endIter = new Date(end.getFullYear(), end.getMonth(), 1);
 
@@ -486,25 +504,17 @@ export default function App() {
       const datesInMonth = monthlyDataMap.get(ym) || [];
 
       if (!isCurrentMonth) {
-        // 3. 당월이 아닌 경우: 해당 월의 가장 빠른 일자의 데이터를 보여줌
         if (datesInMonth.length > 0) {
-          // 해당 월에 속하고 [시작일, 종료일] 범위 내에 포함되는 가장 빠른 날짜 또는 월의 첫 데이터
           const validDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
           if (validDates.length > 0) {
             targetDatesSet.add(validDates[0]);
           }
         }
       } else {
-        // 4. 당월인 경우: 
-        // - 당월의 첫 번째 데이터가 있는 일자
-        // - 그 이후는 오늘 이전일자는 매주 월요일 데이터만
-        // - 마지막에 오늘 날짜
         const monthDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
         if (monthDates.length > 0) {
-          // 첫 번째 데이터
           targetDatesSet.add(monthDates[0]);
 
-          // 그 이후 날짜 중 오늘 이전일자이면서 월요일(getDay() === 1)인 날짜들
           monthDates.forEach(dt => {
             const dtObj = new Date(dt);
             const todayStr = getTodayString();
@@ -513,7 +523,6 @@ export default function App() {
             }
           });
         }
-        // 마지막에 오늘 날짜 포함 (종료일이 오늘이거나 포함될 때)
         const todayStr = getTodayString();
         if (todayStr >= appliedTrendStartDate && todayStr <= appliedTrendEndDate) {
           targetDatesSet.add(todayStr);
@@ -523,10 +532,7 @@ export default function App() {
       currIter.setMonth(currIter.getMonth() + 1);
     }
 
-    // 만약 portfolio에 직접 계산된 날짜가 없거나 기간 내 일자가 직접 선택되지 않은 경우를 대비해 
-    // 사용자가 조회 기간 내 지정한 규칙대로 일자 배열 생성 후 필터링
     if (targetDatesSet.size === 0) {
-      // 기본적으로 시작일부터 종료일까지 조건에 맞는 날짜들 추가
       let c = new Date(start);
       while (c <= end) {
         const y = c.getFullYear();
@@ -536,10 +542,8 @@ export default function App() {
         const isCurrentMonth = (y === currentYear && m === currentMonth);
 
         if (!isCurrentMonth) {
-          // 당월이 아닌 경우 각 월의 1일 또는 해당월 첫 날짜
           if (d === 1) targetDatesSet.add(dateStr);
         } else {
-          // 당월인 경우 첫날, 월요일, 오늘
           const todayStr = getTodayString();
           if (c.getDay() === 1 || dateStr === todayStr || d === 1) {
             targetDatesSet.add(dateStr);
@@ -551,7 +555,6 @@ export default function App() {
 
     const finalDates = Array.from(targetDatesSet).sort();
 
-    // 포트폴리오 데이터에서 날짜별 현재금액 총액 가져오기 함수
     const getPortfolioTotalForDate = (dateStr) => {
       const itemsForDate = portfolios.filter(p => p.baseDate === dateStr);
       if (itemsForDate.length === 0) return 0;
@@ -743,8 +746,8 @@ export default function App() {
           setStocks(prev => [...excelRows, ...prev]);
         } else if (activeUploadType === 'trend') {
           const uploadedRows = dataRows.map((row, index) => {
-            const dt = parseExcelDate(row[headers.indexOf('일자')]);
-            const amt = parseFloat(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9.]/g, '')) || 0;
+            const dt = parseExcelDate(row[0]); // 첫 번째 열 (일자)
+            const amt = parseFloat(String(row[1] || '0').replace(/[^0-9.]/g, '')) || 0; // 두 번째 열 (금액)
             return {
               id: 'excel_trend_' + Date.now() + '_' + index,
               date: dt,
@@ -1038,23 +1041,18 @@ export default function App() {
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
-  // 총액 Trend 관련 요약 및 계산 (요청사항 2 반영: 기존 납입총액 + 시작일자보다 적은 날짜 중에 가장 가까운 일자의 납입 누적액)
   const trendTotalPayment = useMemo(() => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
     
-    // 1. 기간 내 납입 총액
     const inRangeSum = payments
       .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-    // 2. 시작일자보다 적은 날짜 중에 가장 가까운 일자의 납입 누적액(또는 해당일까지의 총합)
     const priorPayments = payments.filter(p => p.date && p.date < appliedTrendStartDate);
     let priorSum = 0;
     if (priorPayments.length > 0) {
-      // 날짜 기준 내림차순 정렬하여 가장 가까운(최신) 과거 일자 찾기
       priorPayments.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       const nearestDate = priorPayments[0].date;
-      // 해당 날짜 이하(또는 해당 날짜)의 모든 누적 납입액
       priorSum = payments
         .filter(p => p.date && p.date <= nearestDate)
         .reduce((sum, p) => sum + Number(p.amount || 0), 0);
