@@ -37,11 +37,11 @@ const formatCurrency = (amount) => {
   return Number(amount).toLocaleString('ko-KR');
 };
 
-// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 강력한 함수
+// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 강력한 파서
 const parseExcelDate = (val) => {
-  if (!val) return getTodayString();
+  if (val === undefined || val === null || val === '') return getTodayString();
   
-  // 1. 엑셀 숫자형 날짜 (시리얼 넘버) 처리
+  // 1. 엑셀 고유의 시리얼 넘버(숫자) 형식 처리
   if (typeof val === 'number') {
     const date = new Date(Math.round((val - 25569) * 86400 * 1000));
     const y = date.getUTCFullYear();
@@ -50,7 +50,7 @@ const parseExcelDate = (val) => {
     return `${y}-${m}-${d}`;
   }
 
-  // 2. 문자열 형태 처리 (예: "2026.01.15", "2026/01/15")
+  // 2. 문자열 날짜 처리
   if (typeof val === 'string') {
     let clean = val.trim().replace(/[\.\/]/g, '-');
     if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
@@ -64,17 +64,19 @@ const parseExcelDate = (val) => {
       const d = String(parsed.getDate()).padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
-    return clean;
+    return clean; 
   }
-
   return getTodayString();
 };
 
 export default function App() {
+  const [isTailwindLoaded, setIsTailwindLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('payment');
   const [payments, setPayments] = useState([]);
+  
+  // UI 상태 관리
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // 저장 중복 방지 상태
+  const [isSaving, setIsSaving] = useState(false); // 무한 로딩 방지용 분리
   
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
@@ -85,17 +87,21 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState('');
   const fileInputRef = useRef(null);
 
+  // 초기화 및 CSS 안전 로딩
   useEffect(() => {
-    // [중요] 사용자의 로컬 환경에 Tailwind CSS가 없어도 화면이 예쁘게 나오도록 CDN 강제 삽입
-    if (!document.getElementById('tailwind-cdn')) {
+    if (document.getElementById('tailwind-cdn')) {
+      setIsTailwindLoaded(true);
+    } else {
       const script = document.createElement('script');
       script.id = 'tailwind-cdn';
       script.src = 'https://cdn.tailwindcss.com';
+      script.onload = () => setIsTailwindLoaded(true);
       document.head.appendChild(script);
     }
     fetchPayments();
   }, []);
 
+  // 1. Firebase 데이터 불러오기
   const fetchPayments = async () => {
     try {
       setLoading(true);
@@ -106,10 +112,9 @@ export default function App() {
       }));
       dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       setPayments(dataList);
-      setDeletedIds([]);
+      setDeletedIds([]); // 삭제 대기열 초기화
     } catch (error) {
       console.error("데이터 불러오기 실패:", error);
-      showError('서버에서 데이터를 불러오는 중 문제가 발생했습니다.');
     } finally {
       setLoading(false);
     }
@@ -120,9 +125,12 @@ export default function App() {
     setSelectedIds([]); 
   };
 
+  // 2. 임시 행 추가 (저장 버튼 클릭 시 DB에 반영됨)
   const handleAddRow = () => {
+    setAppliedSearchYear(''); // 새 행이 보이도록 검색어 초기화
+    setSearchYearInput('');
     const newRow = {
-      id: 'temp_' + Date.now(), 
+      id: 'temp_' + Date.now(),
       date: getTodayString(),
       bank: '미래에셋',
       purpose: '연금',
@@ -131,14 +139,14 @@ export default function App() {
     setPayments(prev => [newRow, ...prev]);
   };
 
+  // 3. 삭제 버튼 (선택한 행을 화면에서 지우고 삭제 대기열로 이동)
   const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
     
-    // 진짜 DB에 있는 데이터만 삭제 대기열(deletedIds)로 이동
+    // 임시 ID가 아닌 진짜 DB ID들만 삭제 대기열로 넘김
     const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'));
     setDeletedIds(prev => [...prev, ...targetRealIds]);
 
-    // 화면에서는 즉시 제거
     setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
     setSelectedIds([]);
   };
@@ -154,6 +162,7 @@ export default function App() {
     setErrorModal({ isOpen: true, message });
   };
 
+  // 4. 엑셀 업로드 처리 (raw: true 옵션으로 완벽한 날짜 파싱)
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -178,7 +187,7 @@ export default function App() {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
-        // raw: true를 통해 엑셀의 원본 시리얼 날짜(숫자)를 그대로 가져옴
+        // 날짜를 정상적으로 파싱하기 위해 반드시 raw: true 옵션 사용
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
 
         if (jsonData.length < 2) {
@@ -205,7 +214,6 @@ export default function App() {
         const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
         
         const excelRows = dataRows.map((row, index) => {
-          // 강력해진 날짜 파서 적용
           const rawDate = row[colIndices.date];
           const parsedDate = parseExcelDate(rawDate);
 
@@ -213,7 +221,7 @@ export default function App() {
           const amountNum = parseInt(rawAmount, 10) || 0;
 
           return {
-            id: 'excel_' + Date.now() + '_' + index, // 중복 방지 완벽 ID
+            id: 'excel_' + Date.now() + '_' + index,
             date: parsedDate,
             bank: String(row[colIndices.bank] || '기타').trim(),
             purpose: String(row[colIndices.purpose] || '기타').trim(),
@@ -221,6 +229,8 @@ export default function App() {
           };
         });
 
+        setAppliedSearchYear(''); // 엑셀 데이터가 보이도록 검색 조건 초기화
+        setSearchYearInput('');
         setPayments(prev => [...excelRows, ...prev]);
         setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 최종 반영하세요.');
         setTimeout(() => setSuccessMessage(''), 4000);
@@ -232,47 +242,62 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
+  // 5. DB 일괄 저장 로직 (에러 발생 시에도 무한 로딩에 빠지지 않도록 처리)
   const handleSaveToDatabase = async () => {
-    if (isSaving) return; // 이미 저장 중이면 중복 실행 방지
+    if (isSaving) return; 
     
     try {
-      setIsSaving(true); // 버튼을 '저장 중...' 상태로 변경
+      setIsSaving(true);
+      let errorCount = 0;
 
-      // 1. 화면에서 삭제 처리된 항목들을 실제 DB에서 삭제
+      // A. 삭제 요청된 항목 처리
       for (const id of deletedIds) {
-        await deleteDoc(doc(db, "payments", id));
-      }
-
-      // 2. 화면에 있는 항목들을 DB에 추가하거나 수정
-      for (const payment of payments) {
-        if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
-          await addDoc(collection(db, "payments"), {
-            date: payment.date || getTodayString(),
-            bank: payment.bank || '미래에셋',
-            purpose: payment.purpose || '연금',
-            amount: Number(payment.amount || 0),
-            createdAt: serverTimestamp()
-          });
-        } else {
-          const docRef = doc(db, "payments", payment.id);
-          await updateDoc(docRef, {
-            date: payment.date || getTodayString(),
-            bank: payment.bank || '미래에셋',
-            purpose: payment.purpose || '연금',
-            amount: Number(payment.amount || 0)
-          });
+        try {
+          await deleteDoc(doc(db, "payments", id));
+        } catch (e) {
+          console.error(`삭제 실패 [${id}]:`, e);
+          errorCount++;
         }
       }
 
-      // 3. 작업이 끝나면 깨끗하게 최신 데이터 새로고침
-      await fetchPayments();
-      setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
-      setTimeout(() => setSuccessMessage(''), 3000);
+      // B. 화면에 있는 항목들 추가 또는 수정
+      for (const payment of payments) {
+        try {
+          if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
+            await addDoc(collection(db, "payments"), {
+              date: payment.date || getTodayString(),
+              bank: payment.bank || '미래에셋',
+              purpose: payment.purpose || '연금',
+              amount: Number(payment.amount || 0),
+              createdAt: serverTimestamp()
+            });
+          } else {
+            await updateDoc(doc(db, "payments", payment.id), {
+              date: payment.date || getTodayString(),
+              bank: payment.bank || '미래에셋',
+              purpose: payment.purpose || '연금',
+              amount: Number(payment.amount || 0)
+            });
+          }
+        } catch (e) {
+          console.error(`저장 실패 [${payment.id}]:`, e);
+          errorCount++;
+        }
+      }
+
+      await fetchPayments(); // 성공적으로 완료되면 최신 데이터 불러오기
+
+      if (errorCount > 0) {
+        showError(`저장이 완료되었으나, ${errorCount}건의 처리에 실패했습니다.`);
+      } else {
+        setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
+        setTimeout(() => setSuccessMessage(''), 3000);
+      }
     } catch (error) {
-      console.error("저장 실패:", error);
+      console.error("저장 중 치명적 오류:", error);
       showError('저장 중 통신 오류가 발생했습니다.');
     } finally {
-      setIsSaving(false); // 무조건 로딩 상태 해제
+      setIsSaving(false); // 무조건 로딩 상태 해제 (무한 로딩 방지)
     }
   };
 
@@ -312,10 +337,18 @@ export default function App() {
     return filteredPayments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
   }, [filteredPayments]);
 
+  // CSS 로딩 전에는 뼈대 화면 렌더링 방지
+  if (!isTailwindLoaded) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'sans-serif', color: '#64748b' }}>
+        디자인 요소를 불러오는 중입니다...
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased">
       
-      {/* 엑셀 파일 업로드를 위한 숨겨진 인풋 */}
       <input 
         type="file" 
         accept=".xlsx, .xls" 
@@ -347,13 +380,12 @@ export default function App() {
       )}
 
       {successMessage && (
-        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 font-medium">
+        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2 font-medium transition-all">
           <span>{successMessage}</span>
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between shadow-sm gap-4">
         <div className="flex items-center gap-3 text-indigo-600">
           <Landmark size={28} />
           <h1 className="text-xl font-bold tracking-tight text-slate-900">주식 포트폴리오 관리 시스템</h1>
@@ -364,10 +396,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
         
-        {/* Tab Navigation */}
         <div className="flex space-x-1 border-b border-slate-200 mb-6">
           <button
             onClick={() => setActiveTab('payment')}
@@ -396,7 +426,6 @@ export default function App() {
         {activeTab === 'payment' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
-            {/* Top Section: Controls & Summary */}
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               
               <div className="flex flex-wrap items-center gap-2.5">
@@ -454,7 +483,7 @@ export default function App() {
                 <button 
                   onClick={handleSaveToDatabase}
                   disabled={isSaving}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-2
+                  className={`flex items-center gap-1.5 px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ml-1
                     ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
                 >
                   <Save size={16} />
@@ -462,7 +491,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Right Summary */}
               <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm min-w-max w-full xl:w-auto">
                 <div className="flex flex-col">
                   <span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span>
@@ -480,7 +508,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bottom Section: Data Table */}
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
@@ -584,7 +611,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Portfolio Tab Content */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center flex flex-col items-center justify-center min-h-[50vh]">
              <PiggyBank size={48} className="text-slate-300 mb-4" />
