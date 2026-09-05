@@ -236,23 +236,51 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 구글시트 단가현황 API 호출
+    // 1. 구글시트 단가현황 API 호출 (오류 수정 및 파싱 강화)
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
-      const res = await fetch(apiUrl);
-      const sheetData = await res.json();
-      console.log("구글시트 단가현황 API 응답:", sheetData);
+      const res = await fetch(apiUrl, { redirect: 'follow' });
+      const textData = await res.text();
       
-      if (Array.isArray(sheetData)) {
-        sheetData.forEach(item => {
-          const code = String(item.종목코드 || item.code || item.Code || '').trim();
-          const price = Number(item.현재단가 || item.price || item.Price || item.단가 || 0);
-          if (code) {
-            externalPriceMap.set(code, price);
-          }
-        });
+      let sheetData = [];
+      try {
+        sheetData = JSON.parse(textData);
+      } catch (parseErr) {
+        console.error("JSON 파싱 에러:", parseErr);
       }
+
+      // JSON 배열 찾기 (객체로 래핑되어 있을 경우 대비)
+      let targetArray = [];
+      if (Array.isArray(sheetData)) {
+        targetArray = sheetData;
+      } else if (sheetData && typeof sheetData === 'object') {
+        const potentialArrays = Object.values(sheetData).filter(val => Array.isArray(val));
+        if (potentialArrays.length > 0) {
+          targetArray = potentialArrays[0];
+        }
+      }
+
+      // 데이터 키 매핑 로직 강화 (공백 제거 및 키 유연성 확보)
+      targetArray.forEach(item => {
+        let matchedCode = '';
+        let matchedPrice = 0;
+        
+        for (const [key, value] of Object.entries(item)) {
+          const cleanKey = String(key).replace(/\s+/g, '').toLowerCase();
+          if (cleanKey.includes('종목코드') || cleanKey === 'code') {
+            matchedCode = String(value).trim();
+          }
+          if (cleanKey.includes('단가') || cleanKey.includes('현재가') || cleanKey === 'price') {
+            matchedPrice = parseFloat(String(value).replace(/[^0-9.-]+/g, '')) || 0;
+          }
+        }
+        
+        if (matchedCode) {
+          externalPriceMap.set(matchedCode, matchedPrice);
+        }
+      });
+      console.log("최종 매핑된 단가 목록:", Array.from(externalPriceMap.entries()));
     } catch (err) {
       console.warn("구글시트 단가현황 API 호출 실패 (수동 입력 사용):", err);
     }
