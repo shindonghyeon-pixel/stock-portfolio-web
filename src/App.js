@@ -574,7 +574,7 @@ export default function App() {
                             <option value="연금">연금</option>
                             <option value="IRP">IRP</option>
                             <option value="DC">DC</option>
-                            <option value="기타">기타</option>
+                            <option value="기탈">기타</option>
                           </select>
                         </td>
                         <td className="py-2 px-4">
