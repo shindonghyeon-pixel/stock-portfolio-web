@@ -32,9 +32,13 @@ const getTodayString = () => {
   return `${year}-${month}-${day}`;
 };
 
-const formatCurrency = (amount) => {
-  if (amount === 0 || !amount) return '0';
-  return Number(amount).toLocaleString('ko-KR');
+const formatCurrency = (amount, currency = 'KRW') => {
+  if (amount === 0 || amount === '' || amount === undefined || isNaN(amount)) return '0';
+  const num = Number(amount);
+  if (currency === 'USD') {
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  return num.toLocaleString('ko-KR', { maximumFractionDigits: 0 });
 };
 
 const parseExcelDate = (val) => {
@@ -184,7 +188,7 @@ export default function App() {
         const dateA = (a.date || '').trim();
         const dateB = (b.date || '').trim();
         if (dateA !== dateB) {
-          return dateB.localeCompare(dateA); // 최근 날짜가 위로 오도록 내림차순 또는 오름차순 (여기선 날짜 최신순)
+          return dateB.localeCompare(dateA); // 최근 날짜 최신순
         }
         const bankA = (a.bank || '').trim();
         const bankB = (b.bank || '').trim();
@@ -253,6 +257,7 @@ export default function App() {
       purpose: '연금',
       name: '',
       code: '',
+      currency: 'KRW',
       price: 0,
       buyQty: 0,
       sellQty: 0,
@@ -439,8 +444,8 @@ export default function App() {
             const bankVal = String(row[colIndices.bank] || '').trim();
             const purposeVal = String(row[colIndices.purpose] || '연금').trim();
             const nameVal = String(row[colIndices.name] || '').trim();
-            const rawPrice = String(row[colIndices.price] || '0').replace(/[^0-9]/g, '');
-            const priceNum = parseInt(rawPrice, 10) || 0;
+            const rawPrice = String(row[colIndices.price] || '0').replace(/[^0-9.]/g, '');
+            const priceNum = parseFloat(rawPrice) || 0;
             const buyQtyNum = parseFloat(String(row[colIndices.buyQty] || '0').replace(/[^0-9.]/g, '')) || 0;
             const sellQtyNum = parseFloat(String(row[colIndices.sellQty] || '0').replace(/[^0-9.]/g, '')) || 0;
 
@@ -450,13 +455,17 @@ export default function App() {
               (s.name || '').trim() === nameVal
             );
 
+            const matchedCode = matchedStock ? matchedStock.code : '';
+            const matchedCurrency = matchedStock ? (matchedStock.currency || 'KRW') : 'KRW';
+
             return {
               id: 'excel_tx_' + Date.now() + '_' + index,
               date: parsedDate,
               bank: bankVal,
               purpose: ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금',
               name: nameVal,
-              code: matchedStock ? matchedStock.code : '',
+              code: matchedCode,
+              currency: matchedCurrency,
               price: priceNum,
               buyQty: buyQtyNum,
               sellQty: sellQtyNum,
@@ -613,6 +622,7 @@ export default function App() {
             purpose: tx.purpose || '연금',
             name: tx.name || '',
             code: tx.code || '',
+            currency: tx.currency || 'KRW',
             price: Number(tx.price || 0),
             buyQty: Number(tx.buyQty || 0),
             sellQty: Number(tx.sellQty || 0),
@@ -626,6 +636,7 @@ export default function App() {
             purpose: tx.purpose || '연금',
             name: tx.name || '',
             code: tx.code || '',
+            currency: tx.currency || 'KRW',
             price: Number(tx.price || 0),
             buyQty: Number(tx.buyQty || 0),
             sellQty: Number(tx.sellQty || 0)
@@ -684,8 +695,10 @@ export default function App() {
 
           if (matchedStock) {
             updated.code = matchedStock.code || '';
+            updated.currency = matchedStock.currency || 'KRW';
           } else if (field === 'name') {
             updated.code = '';
+            updated.currency = 'KRW';
           }
         }
         return updated;
@@ -1090,7 +1103,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. 종목 관리 탭 ([은행], [목적], [종목코드], [종목명], [종목 유형], [유형 비율], [통화]) */}
+        {/* 2. 종목 관리 탭 */}
         {activeTab === 'stock' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
@@ -1358,7 +1371,7 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[1000px]">
+              <table className="w-full text-left border-collapse min-w-[1050px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
@@ -1369,11 +1382,12 @@ export default function App() {
                         onChange={handleSelectAllTransactions}
                       />
                     </th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-44">거래일자</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-40">은행</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">목적</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-40">거래일자</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">은행</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32">목적</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">종목코드</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32">종목코드</th>
+                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-24 text-center">통화</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32 text-right">단가</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매수수량</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매도수량</th>
@@ -1382,7 +1396,7 @@ export default function App() {
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {loadingTransactions && transactions.length === 0 ? (
                     <tr>
-                      <td colSpan="9" className="py-16 text-center text-slate-400">거래현황 데이터를 불러오는 중입니다...</td>
+                      <td colSpan="10" className="py-16 text-center text-slate-400">거래현황 데이터를 불러오는 중입니다...</td>
                     </tr>
                   ) : filteredTransactions.length > 0 ? (
                     filteredTransactions.map((tx) => {
@@ -1456,10 +1470,18 @@ export default function App() {
                           <td className="py-2 px-4">
                             <input 
                               type="text" 
-                              value={tx.price === 0 ? '' : formatCurrency(tx.price)}
+                              value={tx.currency || 'KRW'}
+                              readOnly
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center bg-slate-100 text-slate-600 outline-none cursor-not-allowed font-medium"
+                            />
+                          </td>
+                          <td className="py-2 px-4">
+                            <input 
+                              type="text" 
+                              value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)}
                               onChange={(e) => {
-                                const raw = e.target.value.replace(/[^0-9]/g, '');
-                                handleTransactionRowChange(tx.id, 'price', parseInt(raw, 10) || 0);
+                                const raw = e.target.value.replace(/[^0-9.]/g, '');
+                                handleTransactionRowChange(tx.id, 'price', raw === '' ? 0 : parseFloat(raw));
                               }}
                               placeholder="0"
                               className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-right focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900 font-medium"
@@ -1468,6 +1490,7 @@ export default function App() {
                           <td className="py-2 px-4">
                             <input 
                               type="number" 
+                              step="any"
                               value={tx.buyQty === 0 ? '' : tx.buyQty}
                               onChange={(e) => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)}
                               placeholder="0"
@@ -1477,6 +1500,7 @@ export default function App() {
                           <td className="py-2 px-4">
                             <input 
                               type="number" 
+                              step="any"
                               value={tx.sellQty === 0 ? '' : tx.sellQty}
                               onChange={(e) => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)}
                               placeholder="0"
@@ -1488,7 +1512,7 @@ export default function App() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan="9" className="py-16 text-center text-slate-500">
+                      <td colSpan="10" className="py-16 text-center text-slate-500">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <CheckSquare size={32} className="text-slate-300" />
                           <p>조회된 거래현황 내역이 없습니다.</p>
