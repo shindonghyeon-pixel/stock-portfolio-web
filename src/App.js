@@ -236,7 +236,7 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. 구글시트 단가현황 API 호출
+    // 구글시트 단가현황 API 호출
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbwXxM9sjxOAwHQDQ4kjX9tINeaD5aJg5eOVGglD8Z8IGs7WVdkTEw6nUKG-Tm2Kej1-/exec';
@@ -244,10 +244,8 @@ export default function App() {
       const sheetData = await res.json();
       console.log("구글시트 단가현황 API 응답:", sheetData);
       
-      // sheetData가 배열 형태라고 가정하고 종목코드 기준으로 현재단가 매핑
       if (Array.isArray(sheetData)) {
         sheetData.forEach(item => {
-          // 키값 (종목코드 또는 code 등 유연하게 대응)
           const code = String(item.종목코드 || item.code || item.Code || '').trim();
           const price = Number(item.현재단가 || item.price || item.Price || item.단가 || 0);
           if (code) {
