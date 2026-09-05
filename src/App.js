@@ -1342,10 +1342,10 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
-                    // 요청하신 순차적 비율 계산 로직 (현재 행과 다음 행(더 과거 행) 비교)
+                    // 요청하신 변경된 비율 계산 로직: (현재 행의 금액 - 다음 행(더 과거 행)의 금액) / 다음 행의 금액
                     const nextRow = sortedTrendRows[index + 1];
                     const nextAmount = nextRow ? Number(nextRow.amount || 0) : 0;
-                    const ratio = nextRow && nextAmount !== 0 ? (nextAmount - Number(row.amount || 0)) / nextAmount : 0;
+                    const ratio = nextRow && nextAmount !== 0 ? (Number(row.amount || 0) - nextAmount) / nextAmount : 0;
 
                     const profitRate = trendTotalPayment !== 0 ? (Number(row.amount || 0) - trendTotalPayment) / trendTotalPayment : 0;
                     const profitAmount = Number(row.amount || 0) - trendTotalPayment;
