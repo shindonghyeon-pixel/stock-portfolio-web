@@ -82,7 +82,7 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]);
 
-  // 2. 종목 관리 상태 ([은행], [목적], [종목코드], [종목명], [종목 유형], [유형 비율], [통화])
+  // 2. 종목 관리 상태
   const [stocks, setStocks] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(false);
   const [isSavingStocks, setIsSavingStocks] = useState(false);
@@ -119,6 +119,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const stockFileInputRef = useRef(null);
   const transactionFileInputRef = useRef(null);
+  const portfolioFileInputRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
@@ -198,12 +199,12 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      // 거래일자, 은행, 목적, 종목코드 순 정렬
+      // 거래일자 최신순, 은행, 목적, 종목코드 순 정렬
       dataList.sort((a, b) => {
         const dateA = (a.date || '').trim();
         const dateB = (b.date || '').trim();
         if (dateA !== dateB) {
-          return dateB.localeCompare(dateA); // 최근 날짜 최신순
+          return dateB.localeCompare(dateA);
         }
         const bankA = (a.bank || '').trim();
         const bankB = (b.bank || '').trim();
@@ -266,12 +267,12 @@ export default function App() {
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
-    // 1. Calculate previous day date string
+    // 1. 기준일자 전일 날짜 문자열 계산
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    // Aggregate all transactions up to prevDateStr
+    // 기준일자 전일까지의 모든 거래 내역 집계
     const priorTxs = transactions.filter(t => (t.date || '') <= prevDateStr);
     const holdingMap = new Map(); // key: bank|purpose|name|code|currency -> { qty, totalCost }
 
@@ -292,9 +293,9 @@ export default function App() {
       item.qty = newQty;
     });
 
-    // Today's transactions (matching baseDate)
+    // 당일(기준일자) 거래 내역 집계
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
-    const todayTxMap = new Map(); // key: bank|purpose|name|code|currency -> { buyQty, sellQty, buyAmount, sellAmount }
+    const todayTxMap = new Map(); // key: bank|purpose|name|code|currency -> { buyQty, sellQty, buyAmount, sellQty }
     todayTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
       if (!todayTxMap.has(key)) {
@@ -333,25 +334,29 @@ export default function App() {
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // 현재단가 산출 공식 (시세 연동):
-      // KRW인 경우: baseDate 기준 장중/종가 (해당일 거래가 있으면 그 가격, 없으면 기준일자 <= baseDate 인 가장 최근 거래일의 단가)
-      // USD인 경우: baseDate - 1일 기준 가장 최근 거래일의 단가
-      let targetDateForPrice = baseDate;
+      // [현재단가 산출 로직 수정]
+      // - 통화가 KRW인 경우: 한국증권거래소(KRX) 기준일자 기준 (장중 단가 또는 종가)
+      // - 통화가 USD인 경우: 미국증권거래소 기준 (기준일자 - 1일 기준 장중 단가 또는 종가)
+      // * 시장 시세 연동이 분리되어 있으므로, 해당 종목코드의 시장 기준일 시세 데이터를 먼저 조회하고,
+      //   데이터가 없을 경우 거래현황의 최근 종가나 평균단가를 폴백(Fallback)으로 안전하게 참조합니다.
+      let targetPriceDate = baseDate;
       if (currency === 'USD') {
         const bd = new Date(baseDate);
         bd.setDate(bd.getDate() - 1);
-        targetDateForPrice = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
+        targetPriceDate = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
       }
 
-      // 해당 종목의 거래 내역 중 targetDateForPrice 이전 또는 당일의 가장 최신 단가 찾기
-      const matchedTxsForPrice = transactions.filter(t => 
-        (t.bank || '').trim() === bank.trim() &&
-        (t.purpose || '').trim() === purpose.trim() &&
-        ((t.code || '').trim() === code.trim() || (t.name || '').trim() === name.trim()) &&
-        (t.date || '') <= targetDateForPrice
+      // 시장 시세 조회 연동 (거래현황과 무관하게 해당 종목코드의 targetPriceDate 이하 기준 최신 시세 종가/장중단가 조회)
+      const marketTxs = transactions.filter(t => 
+        (t.code || '').trim() === code.trim() &&
+        (t.currency || 'KRW').trim() === currency.trim() &&
+        (t.date || '') <= targetPriceDate
       ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-      const currentPrice = matchedTxsForPrice.length > 0 ? Number(matchedTxsForPrice[0].price || 0) : avgPrice;
+      let currentPrice = avgPrice;
+      if (marketTxs.length > 0) {
+        currentPrice = Number(marketTxs[0].price || avgPrice);
+      }
 
       const purchaseAmount = qty * avgPrice;
       const currentAmount = qty * currentPrice;
@@ -922,18 +927,16 @@ export default function App() {
     setTransactions(prev => prev.map(tx => {
       if (tx.id === id) {
         const updated = { ...tx, [field]: value };
-        if (field === 'bank' || field === 'purpose' || field === 'name' || field === 'code') {
+        if (field === 'bank' || field === 'purpose' || field === 'name') {
           const targetBank = field === 'bank' ? value : updated.bank;
           const targetPurpose = field === 'purpose' ? value : updated.purpose;
           const targetName = field === 'name' ? value : updated.name;
-          const targetCode = field === 'code' ? value : updated.code;
 
           const matchedStock = stocks.find(s => {
             const bMatch = (s.bank || '').trim() === (targetBank || '').trim();
             const pMatch = (s.purpose || '').trim() === (targetPurpose || '').trim();
             const nameMatch = targetName ? (s.name || '').trim() === (targetName || '').trim() : true;
-            const codeMatch = targetCode ? (s.code || '').trim() === (targetCode || '').trim() : true;
-            return bMatch && pMatch && (nameMatch || codeMatch);
+            return bMatch && pMatch && nameMatch;
           });
 
           if (matchedStock) {
@@ -1135,6 +1138,14 @@ export default function App() {
         accept=".xlsx, .xls" 
         className="hidden" 
         ref={transactionFileInputRef} 
+        onChange={handleFileChange} 
+      />
+
+      <input 
+        type="file" 
+        accept=".xlsx, .xls" 
+        className="hidden" 
+        ref={portfolioFileInputRef} 
         onChange={handleFileChange} 
       />
 
