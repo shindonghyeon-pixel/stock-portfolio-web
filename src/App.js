@@ -21,6 +21,7 @@ import {
   updateDoc,
   deleteDoc, 
   doc, 
+  writeBatch,
   serverTimestamp 
 } from 'firebase/firestore';
 
@@ -70,7 +71,7 @@ export default function App() {
   const [payments, setPayments] = useState([]);
   
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // 무한 로딩 원천 방지 상태
+  const [isSaving, setIsSaving] = useState(false); // 저장 중복 방지 상태
   
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
@@ -222,28 +223,32 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // [저장] 버튼 로직: 타임아웃 및 예외 처리 안전장치 적용
+  // [저장] 버튼 로직: Firebase Batch(일괄 처리)를 사용하여 속도 대폭 개선 및 타임아웃 30초로 연장
   const handleSaveToDatabase = async () => {
     if (isSaving) return;
     
     setIsSaving(true);
-    console.log("=== 저장 작업 시작 ===");
+    console.log("=== 저장 작업 시작 (Batch 방식) ===");
 
-    // 만약 통신이 10초 이상 지연될 경우 무한 로딩을 막기 위한 타임아웃 장치
+    // 대용량 엑셀도 거뜬히 처리하도록 타임아웃을 30초로 넉넉하게 설정
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 10000)
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 30000)
     );
 
     const saveExecution = async () => {
+      const batch = writeBatch(db);
+
       // 1. 삭제 대기열 처리
       for (const id of deletedIds) {
-        await deleteDoc(doc(db, "payments", id));
+        const docRef = doc(db, "payments", id);
+        batch.delete(docRef);
       }
 
       // 2. 추가 및 수정 처리
       for (const payment of payments) {
         if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
-          await addDoc(collection(db, "payments"), {
+          const newDocRef = doc(collection(db, "payments"));
+          batch.set(newDocRef, {
             date: payment.date || getTodayString(),
             bank: payment.bank || '미래에셋',
             purpose: payment.purpose || '연금',
@@ -252,7 +257,7 @@ export default function App() {
           });
         } else {
           const docRef = doc(db, "payments", payment.id);
-          await updateDoc(docRef, {
+          batch.update(docRef, {
             date: payment.date || getTodayString(),
             bank: payment.bank || '미래에셋',
             purpose: payment.purpose || '연금',
@@ -260,6 +265,9 @@ export default function App() {
           });
         }
       }
+
+      // 일괄 커밋 실행
+      await batch.commit();
     };
 
     try {
@@ -271,7 +279,7 @@ export default function App() {
       console.error("저장 중 에러 발생:", error);
       showError(`저장 실패: ${error.message}`);
     } finally {
-      setIsSaving(false); // 어떤 상황에서도 무조건 로딩 해제
+      setIsSaving(false);
       console.log("=== 저장 작업 종료 (로딩 해제 완료) ===");
     }
   };
