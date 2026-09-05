@@ -459,98 +459,28 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
+  // 요청하신 대로 기존 로직을 제거하고 조회 기간 내 모든 포트폴리오 현황의 일자와 현재금액 총액을 가져오도록 수정
   const handleCalculateTrend = () => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) {
       showError('시작일자와 종료일자를 반드시 입력해주세요.');
       return;
     }
 
-    const start = new Date(appliedTrendStartDate);
-    const end = new Date(appliedTrendEndDate);
+    const start = appliedTrendStartDate;
+    const end = appliedTrendEndDate;
     if (start > end) {
       showError('시작일자가 종료일자보다 클 수 없습니다.');
       return;
     }
 
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-
-    const availablePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean))).sort();
-
-    const monthlyDataMap = new Map();
-    availablePortfolioDates.forEach(dt => {
-      const ym = dt.substring(0, 7);
-      if (!monthlyDataMap.has(ym)) {
-        monthlyDataMap.set(ym, []);
-      }
-      monthlyDataMap.get(ym).push(dt);
-    });
-
-    const targetDatesSet = new Set();
-
-    let currIter = new Date(start.getFullYear(), start.getMonth(), 1);
-    const endIter = new Date(end.getFullYear(), end.getMonth(), 1);
-
-    while (currIter <= endIter) {
-      const y = currIter.getFullYear();
-      const m = currIter.getMonth();
-      const ym = `${y}-${String(m + 1).padStart(2, '0')}`;
-      const isCurrentMonth = (y === currentYear && m === currentMonth);
-
-      const datesInMonth = monthlyDataMap.get(ym) || [];
-
-      if (!isCurrentMonth) {
-        if (datesInMonth.length > 0) {
-          const validDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
-          if (validDates.length > 0) {
-            targetDatesSet.add(validDates[0]);
-          }
-        }
-      } else {
-        const monthDates = datesInMonth.filter(dt => dt >= appliedTrendStartDate && dt <= appliedTrendEndDate);
-        if (monthDates.length > 0) {
-          targetDatesSet.add(monthDates[0]);
-
-          monthDates.forEach(dt => {
-            const dtObj = new Date(dt);
-            const todayStr = getTodayString();
-            if (dt > monthDates[0] && dt < todayStr && dtObj.getDay() === 1) {
-              targetDatesSet.add(dt);
-            }
-          });
-        }
-        const todayStr = getTodayString();
-        if (todayStr >= appliedTrendStartDate && todayStr <= appliedTrendEndDate) {
-          targetDatesSet.add(todayStr);
-        }
-      }
-
-      currIter.setMonth(currIter.getMonth() + 1);
-    }
-
-    if (targetDatesSet.size === 0) {
-      let c = new Date(start);
-      while (c <= end) {
-        const y = c.getFullYear();
-        const m = c.getMonth();
-        const d = c.getDate();
-        const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const isCurrentMonth = (y === currentYear && m === currentMonth);
-
-        if (!isCurrentMonth) {
-          if (d === 1) targetDatesSet.add(dateStr);
-        } else {
-          const todayStr = getTodayString();
-          if (c.getDay() === 1 || dateStr === todayStr || d === 1) {
-            targetDatesSet.add(dateStr);
-          }
-        }
-        c.setDate(c.getDate() + 1);
-      }
-    }
-
-    const finalDates = Array.from(targetDatesSet).sort();
+    // 포트폴리오 데이터에서 조회 기간 내에 존재하는 모든 기준일자(baseDate) 추출
+    const availableDates = Array.from(
+      new Set(
+        portfolios
+          .map(p => p.baseDate)
+          .filter(dt => dt && dt >= start && dt <= end)
+      )
+    ).sort();
 
     const getPortfolioTotalForDate = (dateStr) => {
       const itemsForDate = portfolios.filter(p => p.baseDate === dateStr);
@@ -562,7 +492,7 @@ export default function App() {
       }, 0);
     };
 
-    const newRows = finalDates.map((dt, idx) => {
+    const newRows = availableDates.map((dt, idx) => {
       const amount = getPortfolioTotalForDate(dt);
       return {
         id: 'trend_' + Date.now() + '_' + idx,
@@ -752,7 +682,6 @@ export default function App() {
             };
           });
 
-          // 화면 상태 업데이트 (동일 일자 변경 반영)
           let updatedTrendList = [];
           setTrendRows(prev => {
             const map = new Map();
@@ -764,11 +693,9 @@ export default function App() {
             return updatedTrendList;
           });
 
-          // 엑셀 업로드 직후 DB(Firestore trends 컬렉션)에 바로 자동 반영
           try {
             const batch = writeBatch(db);
             uploadedRows.forEach(tr => {
-              // 기존에 동일 날짜 데이터가 있는지 확인하여 업서트 처리
               const existingRef = doc(collection(db, "trends"));
               batch.set(existingRef, { date: tr.date, amount: Number(tr.amount || 0), createdAt: serverTimestamp() }, { merge: true });
             });
@@ -1082,7 +1009,8 @@ export default function App() {
   }, [trendTotalPayment, trendProfitRateInput]);
 
   const sortedTrendRows = useMemo(() => {
-    return [...trendRows].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    // 요청하신 대로 일자의 역순(최신순)으로 정렬되도록 변경
+    return [...trendRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [trendRows]);
 
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
@@ -1438,7 +1366,8 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {trendRows.length > 0 ? trendRows.map((row, index) => {
+                  {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
+                    // 역순 정렬 기준 마지막 행 (가장 오래된 일자 또는 기준일)
                     const lastRow = sortedTrendRows.length > 0 ? sortedTrendRows[sortedTrendRows.length - 1] : null;
                     const baseAmountForRatio = lastRow ? Number(lastRow.amount || 0) : 0;
 
