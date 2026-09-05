@@ -84,7 +84,7 @@ export default function App() {
   const [selectedStockIds, setSelectedStockIds] = useState([]);
   const [deletedStockIds, setDeletedStockIds] = useState([]);
 
-  // 3. 거래현황 상태 (거래시작일자, 거래종료일자, 거래목록)
+  // 3. 거래현황 상태
   const [transactions, setTransactions] = useState([]);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [isSavingTransactions, setIsSavingTransactions] = useState(false);
@@ -179,7 +179,27 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+      // 거래일자, 은행, 목적, 종목코드 순 정렬
+      dataList.sort((a, b) => {
+        const dateA = (a.date || '').trim();
+        const dateB = (b.date || '').trim();
+        if (dateA !== dateB) {
+          return dateB.localeCompare(dateA); // 최근 날짜가 위로 오도록 내림차순 또는 오름차순 (여기선 날짜 최신순)
+        }
+        const bankA = (a.bank || '').trim();
+        const bankB = (b.bank || '').trim();
+        if (bankA !== bankB) {
+          return bankA.localeCompare(bankB, 'ko');
+        }
+        const purposeA = (a.purpose || '').trim();
+        const purposeB = (b.purpose || '').trim();
+        if (purposeA !== purposeB) {
+          return purposeA.localeCompare(purposeB, 'ko');
+        }
+        const codeA = (a.code || '').trim();
+        const codeB = (b.code || '').trim();
+        return codeA.localeCompare(codeB, 'ko');
+      });
       setTransactions(dataList);
       setDeletedTransactionIds([]);
     } catch (error) {
@@ -214,7 +234,7 @@ export default function App() {
   const handleAddStockRow = () => {
     const newStockRow = {
       id: 'temp_stock_' + Date.now(),
-      bank: '',
+      bank: '미래에셋',
       purpose: '연금',
       code: '',
       name: '',
@@ -424,7 +444,6 @@ export default function App() {
             const buyQtyNum = parseFloat(String(row[colIndices.buyQty] || '0').replace(/[^0-9.]/g, '')) || 0;
             const sellQtyNum = parseFloat(String(row[colIndices.sellQty] || '0').replace(/[^0-9.]/g, '')) || 0;
 
-            // 종목 관리에서 일치하는 종목 찾아 코드 자동 바인딩
             const matchedStock = stocks.find(s => 
               (s.bank || '').trim() === bankVal &&
               (s.purpose || '').trim() === purposeVal &&
@@ -652,7 +671,6 @@ export default function App() {
     setTransactions(prev => prev.map(tx => {
       if (tx.id === id) {
         const updated = { ...tx, [field]: value };
-        // 만약 은행, 목적, 혹은 종목명이 변경되었다면 종목코드 자동 바인딩
         if (field === 'bank' || field === 'purpose' || field === 'name') {
           const targetBank = field === 'bank' ? value : updated.bank;
           const targetPurpose = field === 'purpose' ? value : updated.purpose;
@@ -740,7 +758,6 @@ export default function App() {
     return filteredPayments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
   }, [filteredPayments]);
 
-  // 종목관리 기반 고유 은행 목록 (DISTINCT)
   const availableBanks = useMemo(() => {
     const set = new Set();
     stocks.forEach(s => {
@@ -749,7 +766,6 @@ export default function App() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'));
   }, [stocks]);
 
-  // 특정 행의 선택된 은행, 목적에 따른 고유 종목명 목록 (DISTINCT)
   const getAvailableStockNames = (bank, purpose) => {
     const set = new Set();
     stocks.forEach(s => {
