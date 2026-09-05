@@ -265,15 +265,12 @@ export default function App() {
 
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
+    
     // 1. Calculate previous day date string
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    // Get previous day's portfolios or simulate from prior transactions
-    // For simplicity, find records up to prevDateStr
-    const prevPortfoliosMap = new Map(); // key: bank_purpose_name
-    
     // Aggregate all transactions up to prevDateStr
     const priorTxs = transactions.filter(t => (t.date || '') <= prevDateStr);
     const holdingMap = new Map(); // key: bank|purpose|name|code|currency -> { qty, totalCost }
@@ -297,11 +294,11 @@ export default function App() {
 
     // Today's transactions (matching baseDate)
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
-    const todayTxMap = new Map(); // key: bank|purpose|name|code|currency -> { buyQty, sellQty, buyAmount }
+    const todayTxMap = new Map(); // key: bank|purpose|name|code|currency -> { buyQty, sellQty, buyAmount, sellAmount }
     todayTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
       if (!todayTxMap.has(key)) {
-        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0 });
+        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0, sellQty: 0 });
       }
       const item = todayTxMap.get(key);
       const bQ = Number(t.buyQty || 0);
@@ -313,7 +310,6 @@ export default function App() {
       }
     });
 
-    // Combine all unique keys from holdingMap and todayTxMap
     const allKeys = new Set([...holdingMap.keys(), ...todayTxMap.keys()]);
     const newPfList = [];
 
@@ -333,14 +329,29 @@ export default function App() {
       const qty = prevQty + buyQty - sellQty;
       if (qty <= 0) continue; // 수량이 0 이하인 데이터 제외
 
-      // 평균단가 산출 공식: (전일 평균단가 * 전일 수량) + 당일매수금액 / (전일 수량 + 당일 매수수량)
+      // 평균단가 산출 공식: ((전일 평균단가 * 전일 수량) + 당일매수금액) / (전일 수량 + 당일 매수수량)
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
 
-      // 현재단가 (시세 mock 또는 연동: 임시로 최근 단가 또는 평균단가 기준 연동, 필요시 API 연동 가능)
-      // 최근 거래단가 찾기
-      const recentTx = transactions.filter(t => t.bank === bank && t.purpose === purpose && t.name === name).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-      const currentPrice = recentTx ? Number(recentTx.price || 0) : avgPrice;
+      // 현재단가 산출 공식 (시세 연동):
+      // KRW인 경우: baseDate 기준 장중/종가 (해당일 거래가 있으면 그 가격, 없으면 기준일자 <= baseDate 인 가장 최근 거래일의 단가)
+      // USD인 경우: baseDate - 1일 기준 가장 최근 거래일의 단가
+      let targetDateForPrice = baseDate;
+      if (currency === 'USD') {
+        const bd = new Date(baseDate);
+        bd.setDate(bd.getDate() - 1);
+        targetDateForPrice = `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, '0')}-${String(bd.getDate()).padStart(2, '0')}`;
+      }
+
+      // 해당 종목의 거래 내역 중 targetDateForPrice 이전 또는 당일의 가장 최신 단가 찾기
+      const matchedTxsForPrice = transactions.filter(t => 
+        (t.bank || '').trim() === bank.trim() &&
+        (t.purpose || '').trim() === purpose.trim() &&
+        ((t.code || '').trim() === code.trim() || (t.name || '').trim() === name.trim()) &&
+        (t.date || '') <= targetDateForPrice
+      ).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+      const currentPrice = matchedTxsForPrice.length > 0 ? Number(matchedTxsForPrice[0].price || 0) : avgPrice;
 
       const purchaseAmount = qty * avgPrice;
       const currentAmount = qty * currentPrice;
@@ -911,31 +922,23 @@ export default function App() {
     setTransactions(prev => prev.map(tx => {
       if (tx.id === id) {
         const updated = { ...tx, [field]: value };
-        if (field === 'bank' || field === 'purpose' || field === 'name') {
+        if (field === 'bank' || field === 'purpose' || field === 'name' || field === 'code') {
           const targetBank = field === 'bank' ? value : updated.bank;
           const targetPurpose = field === 'purpose' ? value : updated.purpose;
           const targetName = field === 'name' ? value : updated.name;
+          const targetCode = field === 'code' ? value : updated.code;
 
-          const matchedStock = stocks.find(s => 
-            (s.bank || '').trim() === (targetBank || '').trim() &&
-            (s.purpose || '').trim() === (targetPurpose || '').trim() &&
-            (s.name || '').trim() === (targetName || '').trim()
-          );
+          const matchedStock = stocks.find(s => {
+            const bMatch = (s.bank || '').trim() === (targetBank || '').trim();
+            const pMatch = (s.purpose || '').trim() === (targetPurpose || '').trim();
+            const nameMatch = targetName ? (s.name || '').trim() === (targetName || '').trim() : true;
+            const codeMatch = targetCode ? (s.code || '').trim() === (targetCode || '').trim() : true;
+            return bMatch && pMatch && (nameMatch || codeMatch);
+          });
 
           if (matchedStock) {
             updated.code = matchedStock.code || '';
-            updated.currency = matchedStock.currency || 'KRW';
-          } else if (field === 'name') {
-            updated.code = '';
-            updated.currency = 'KRW';
-          }
-        } else if (field === 'code') {
-          const matchedStock = stocks.find(s => 
-            (s.bank || '').trim() === (updated.bank || '').trim() &&
-            (s.purpose || '').trim() === (updated.purpose || '').trim() &&
-            (s.code || '').trim() === (value || '').trim()
-          );
-          if (matchedStock) {
+            updated.name = matchedStock.name || updated.name;
             updated.currency = matchedStock.currency || 'KRW';
           }
         }
@@ -982,11 +985,12 @@ export default function App() {
       return true;
     });
 
+    // 정렬 순서: 거래일자 최신순, 은행, 목적, 종목코드 순
     list.sort((a, b) => {
       const dateA = (a.date || '').trim();
       const dateB = (b.date || '').trim();
       if (dateA !== dateB) {
-        return dateB.localeCompare(dateA); // 거래일자 최신순
+        return dateB.localeCompare(dateA); 
       }
       const bankA = (a.bank || '').trim();
       const bankB = (b.bank || '').trim();
@@ -1677,7 +1681,7 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[1050px]">
+              <table className="w-full text-left border-collapse min-w-[1100px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
@@ -1768,17 +1772,17 @@ export default function App() {
                             <input 
                               type="text" 
                               value={tx.code || ''}
-                              readOnly
-                              placeholder="자동입력"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm bg-slate-100 text-slate-600 outline-none cursor-not-allowed"
+                              onChange={(e) => handleTransactionRowChange(tx.id, 'code', e.target.value)}
+                              placeholder="종목코드"
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm bg-white text-slate-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                             />
                           </td>
                           <td className="py-2 px-4">
                             <input 
                               type="text" 
                               value={tx.currency || 'KRW'}
-                              readOnly
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center bg-slate-100 text-slate-600 outline-none cursor-not-allowed font-medium"
+                              onChange={(e) => handleTransactionRowChange(tx.id, 'currency', e.target.value)}
+                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm text-center bg-white text-slate-900 outline-none font-medium focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
                             />
                           </td>
                           <td className="py-2 px-4">
