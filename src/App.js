@@ -8,6 +8,7 @@ import {
   Wallet,
   Landmark,
   PiggyBank,
+  TrendingUp,
   CheckSquare,
   AlertCircle,
   Save,
@@ -31,6 +32,12 @@ const getTodayString = () => {
   const month = String(today.getMonth() + 1).padStart(2, '0');
   const day = String(today.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const getYearFirstDayString = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  return `${year}-01-01`;
 };
 
 const formatCurrency = (amount, currency = 'KRW') => {
@@ -115,12 +122,24 @@ export default function App() {
   const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
   const [exchangeRate, setExchangeRate] = useState(1350);
 
+  // 5. 총액 Trend 상태
+  const [trendStartDate, setTrendStartDate] = useState(getYearFirstDayString());
+  const [trendEndDate, setTrendEndDate] = useState(getTodayString());
+  const [appliedTrendStartDate, setAppliedTrendStartDate] = useState(getYearFirstDayString());
+  const [appliedTrendEndDate, setAppliedTrendEndDate] = useState(getTodayString());
+  const [trendProfitRateInput, setTrendProfitRateInput] = useState(0);
+  const [trendRows, setTrendRows] = useState([]);
+  const [selectedTrendIds, setSelectedTrendIds] = useState([]);
+  const [deletedTrendIds, setDeletedTrendIds] = useState([]);
+  const [isSavingTrend, setIsSavingTrend] = useState(false);
+
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
   
   const fileInputRef = useRef(null);
   const stockFileInputRef = useRef(null);
   const transactionFileInputRef = useRef(null);
+  const trendFileInputRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
@@ -138,6 +157,7 @@ export default function App() {
     fetchStocks();
     fetchTransactions();
     fetchPortfolios();
+    fetchTrends();
     fetchExchangeRate();
   }, []);
 
@@ -244,6 +264,20 @@ export default function App() {
       console.error("포트폴리오 데이터 불러오기 실패:", error);
     } finally {
       setLoadingPortfolios(false);
+    }
+  };
+
+  const fetchTrends = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "trends"));
+      let dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setTrendRows(dataList);
+      setDeletedTrendIds([]);
+    } catch (error) {
+      console.error("총액 Trend 데이터 불러오기 실패:", error);
     }
   };
 
@@ -407,6 +441,82 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
+  const handleCalculateTrend = () => {
+    if (!appliedTrendStartDate || !appliedTrendEndDate) {
+      showError('시작일자와 종료일자를 반드시 입력해주세요.');
+      return;
+    }
+
+    const start = new Date(appliedTrendStartDate);
+    const end = new Date(appliedTrendEndDate);
+    if (start > end) {
+      showError('시작일자가 종료일자보다 클 수 없습니다.');
+      return;
+    }
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    let targetDates = [];
+    let curr = new Date(start);
+
+    while (curr <= end) {
+      const y = curr.getFullYear();
+      const m = curr.getMonth();
+      const d = curr.getDate();
+
+      const isCurrentMonth = (y === currentYear && m === currentMonth);
+
+      if (isCurrentMonth) {
+        // 당월인 경우는 매일 또는 해당 기간 내 일자별로 포함
+        const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        targetDates.push(dateStr);
+      } else {
+        // 당월이 아닌 경우는 매달 첫째 날만 포함
+        if (d === 1) {
+          const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+          targetDates.push(dateStr);
+        }
+      }
+      curr.setDate(curr.getDate() + 1);
+    }
+
+    // 포트폴리오 데이터에서 날짜별 현재금액 총액 가져오기 함수
+    const getPortfolioTotalForDate = (dateStr) => {
+      const itemsForDate = portfolios.filter(p => p.baseDate === dateStr);
+      if (itemsForDate.length === 0) return 0;
+      return itemsForDate.reduce((sum, p) => {
+        const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
+        const mult = isUSD ? exchangeRate : 1;
+        return sum + (Number(p.currentAmount || 0) * mult);
+      }, 0);
+    };
+
+    const newRows = targetDates.map((dt, idx) => {
+      const amount = getPortfolioTotalForDate(dt);
+      return {
+        id: 'trend_' + Date.now() + '_' + idx,
+        date: dt,
+        amount: amount,
+        isTemp: true
+      };
+    });
+
+    setTrendRows(newRows);
+    setSuccessMessage('총액 Trend 조회가 완료되었습니다.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  const handleAddTrendRow = () => {
+    setTrendRows(prev => [{
+      id: 'temp_trend_' + Date.now(),
+      date: getTodayString(),
+      amount: 0,
+      isTemp: true
+    }, ...prev]);
+  };
+
   const handleAddPortfolioRow = () => {
     const defaultBank = availableBanks[0] || '';
     const defaultPurpose = availablePurposes[0] || '연금';
@@ -496,9 +606,21 @@ export default function App() {
     setSelectedPortfolioIds([]);
   };
 
+  const handleDeleteTrendRows = () => {
+    if (selectedTrendIds.length === 0) return;
+    setDeletedTrendIds(prev => [...prev, ...selectedTrendIds.filter(id => !String(id).startsWith('temp_trend_') && !String(id).startsWith('trend_'))]);
+    setTrendRows(prev => prev.filter(t => !selectedTrendIds.includes(t.id)));
+    setSelectedTrendIds([]);
+  };
+
   const triggerExcelUpload = (type) => {
     setActiveUploadType(type);
-    const refMap = { payment: fileInputRef, stock: stockFileInputRef, transaction: transactionFileInputRef };
+    const refMap = { 
+      payment: fileInputRef, 
+      stock: stockFileInputRef, 
+      transaction: transactionFileInputRef,
+      trend: trendFileInputRef
+    };
     if (refMap[type].current) {
       refMap[type].current.value = "";
       refMap[type].current.click();
@@ -550,6 +672,27 @@ export default function App() {
             currency: String(row[headers.indexOf('통화')] || 'KRW').trim(),
           }));
           setStocks(prev => [...excelRows, ...prev]);
+        } else if (activeUploadType === 'trend') {
+          // 엑셀 포맷: 일자 / 금액
+          const uploadedRows = dataRows.map((row, index) => {
+            const dt = parseExcelDate(row[headers.indexOf('일자')]);
+            const amt = parseFloat(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9.]/g, '')) || 0;
+            return {
+              id: 'excel_trend_' + Date.now() + '_' + index,
+              date: dt,
+              amount: amt
+            };
+          });
+
+          // 동일 일자에 금액이 다시 들어오면 최신 데이터로 변경 (병합/덮어쓰기)
+          setTrendRows(prev => {
+            const map = new Map();
+            prev.forEach(r => map.set(r.date, r));
+            uploadedRows.forEach(r => {
+              map.set(r.date, { ...r, id: map.has(r.date) ? map.get(r.date).id : r.id });
+            });
+            return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+          });
         } else {
           const excelRows = dataRows.map((row, index) => {
             const bankVal = String(row[headers.indexOf('은행')] || '').trim();
@@ -688,6 +831,29 @@ export default function App() {
     }
   };
 
+  const handleSaveTrendToDatabase = async () => {
+    if (isSavingTrend) return;
+    setIsSavingTrend(true);
+    try {
+      const batch = writeBatch(db);
+      deletedTrendIds.forEach(id => batch.delete(doc(db, "trends", id)));
+      trendRows.forEach(tr => {
+        const ref = String(tr.id).startsWith('temp_trend_') || String(tr.id).startsWith('trend_') || String(tr.id).startsWith('excel_trend_') ? doc(collection(db, "trends")) : doc(db, "trends", tr.id);
+        const data = { date: tr.date, amount: Number(tr.amount || 0) };
+        if (String(tr.id).startsWith('temp_trend_') || String(tr.id).startsWith('trend_') || String(tr.id).startsWith('excel_trend_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchTrends();
+      setSuccessMessage('총액 Trend 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSavingTrend(false);
+    }
+  };
+
   const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
   const handleStockRowChange = (id, field, val) => {
     setStocks(prev => prev.map(s => {
@@ -764,6 +930,10 @@ export default function App() {
     }));
   };
 
+  const handleTrendRowChange = (id, field, val) => {
+    setTrendRows(prev => prev.map(tr => tr.id === id ? { ...tr, [field]: val } : tr));
+  };
+
   const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   
   const filteredStocks = useMemo(() => {
@@ -801,6 +971,24 @@ export default function App() {
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
+  // 총액 Trend 관련 요약 및 계산
+  const trendTotalPayment = useMemo(() => {
+    if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
+    return payments
+      .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
+      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  }, [payments, appliedTrendStartDate, appliedTrendEndDate]);
+
+  const trendTargetAmount = useMemo(() => {
+    const rate = Number(trendProfitRateInput || 0);
+    return trendTotalPayment * (1 + rate);
+  }, [trendTotalPayment, trendProfitRateInput]);
+
+  // 정렬된 trendRows (오름차순 또는 내림차순 정렬하여 가장 마지막 입력된 일자 기준 계산)
+  const sortedTrendRows = useMemo(() => {
+    return [...trendRows].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  }, [trendRows]);
+
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
   const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
 
@@ -811,6 +999,7 @@ export default function App() {
       <input type="file" accept=".xlsx, .xls" className="hidden" ref={fileInputRef} onChange={handleFileChange} />
       <input type="file" accept=".xlsx, .xls" className="hidden" ref={stockFileInputRef} onChange={handleFileChange} />
       <input type="file" accept=".xlsx, .xls" className="hidden" ref={transactionFileInputRef} onChange={handleFileChange} />
+      <input type="file" accept=".xlsx, .xls" className="hidden" ref={trendFileInputRef} onChange={handleFileChange} />
 
       {errorModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
@@ -835,6 +1024,7 @@ export default function App() {
           <button onClick={() => setActiveTab('stock')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'stock' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Layers size={18} />종목 관리</button>
           <button onClick={() => setActiveTab('transaction')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'transaction' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><ArrowLeftRight size={18} />거래현황</button>
           <button onClick={() => setActiveTab('portfolio')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'portfolio' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><PiggyBank size={18} />포트폴리오 현황</button>
+          <button onClick={() => setActiveTab('trend')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'trend' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><TrendingUp size={18} />총액 Trend</button>
         </div>
 
         {/* 1. 납입금액 관리 탭 */}
@@ -1106,6 +1296,77 @@ export default function App() {
                       </tr>
                     );
                   }) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* 5. 총액 Trend 탭 */}
+        {activeTab === 'trend' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+                  <span className="text-xs text-slate-500 font-medium">기간</span>
+                  <input type="date" value={trendStartDate} onChange={e => setTrendStartDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                  <span className="text-slate-400">~</span>
+                  <input type="date" value={trendEndDate} onChange={e => setTrendEndDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                </div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+                  <span className="text-xs text-slate-500 font-medium">이익율</span>
+                  <input type="number" step="any" value={trendProfitRateInput} onChange={e => setTrendProfitRateInput(parseFloat(e.target.value) || 0)} className="w-20 text-sm outline-none bg-transparent font-medium text-right" placeholder="0" />
+                </div>
+                <button onClick={() => { setAppliedTrendStartDate(trendStartDate); setAppliedTrendEndDate(trendEndDate); handleCalculateTrend(); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleAddTrendRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
+                <button onClick={handleDeleteTrendRows} disabled={selectedTrendIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTrendIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+                <button onClick={() => triggerExcelUpload('trend')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleSaveTrendToDatabase} disabled={isSavingTrend} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingTrend ? '저장 중...' : '저장'}</button>
+              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
+                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">납입 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(trendTotalPayment)}원</span></div>
+                <div className="w-px h-8 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">목표 금액</span><span className="text-sm font-bold text-indigo-600">{formatCurrency(trendTargetAmount)}원</span></div>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={trendRows.length > 0 && selectedTrendIds.length === trendRows.length} onChange={e => setSelectedTrendIds(e.target.checked ? trendRows.map(t => t.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44 text-right">금액</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">비율</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">이익율</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44 text-right">이익금액</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {trendRows.length > 0 ? trendRows.map((row, index) => {
+                    // 현재일 기준으로 가장 마지막 입력된 일자의 금액 찾기 (sortedTrendRows 기준 가장 마지막 항목의 금액)
+                    const lastRow = sortedTrendRows.length > 0 ? sortedTrendRows[sortedTrendRows.length - 1] : null;
+                    const baseAmountForRatio = lastRow ? Number(lastRow.amount || 0) : 0;
+
+                    // 비율: (금액 - 현재일 기준으로 가장 마지막 입력된 일자의 금액) / 현재일 기준으로 가장 마지막 입력된 일자의 금액
+                    const ratio = baseAmountForRatio !== 0 ? (Number(row.amount || 0) - baseAmountForRatio) / baseAmountForRatio : 0;
+
+                    // 이익율: (금액 - 납입총액) / 납입총액
+                    const profitRate = trendTotalPayment !== 0 ? (Number(row.amount || 0) - trendTotalPayment) / trendTotalPayment : 0;
+
+                    // 이익금액: 금액 - 납입총액
+                    const profitAmount = Number(row.amount || 0) - trendTotalPayment;
+
+                    return (
+                      <tr key={row.id} className={`hover:bg-slate-50 ${selectedTrendIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedTrendIds.includes(row.id)} onChange={() => setSelectedTrendIds(prev => prev.includes(row.id) ? prev.filter(i => i !== row.id) : [...prev, row.id])} /></td>
+                        <td className="py-2 px-4"><input type="date" value={row.date || ''} onChange={e => handleTrendRowChange(row.id, 'date', e.target.value)} className="w-full px-2 py-1 border rounded text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="text" value={row.amount === 0 || row.amount === '' ? '' : formatCurrency(row.amount)} onChange={e => handleTrendRowChange(row.id, 'amount', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)} placeholder="0" className="w-full px-2 py-1 border rounded text-sm text-right font-medium bg-white" /></td>
+                        <td className={`py-3 px-4 text-sm text-right font-medium ${ratio >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(ratio * 100).toFixed(2)}%</td>
+                        <td className={`py-3 px-4 text-sm text-right font-medium ${profitRate >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{(profitRate * 100).toFixed(2)}%</td>
+                        <td className={`py-3 px-4 text-sm text-right font-bold ${profitAmount >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(profitAmount)}원</td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="6" className="py-16 text-center text-slate-500">조회된 총액 Trend 내역이 없습니다. 기간 설정 후 [조회]를 누르거나 추가/엑셀업로드를 해주세요.</td></tr>}
                 </tbody>
               </table>
             </div>
