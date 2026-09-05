@@ -946,16 +946,13 @@ export default function App() {
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
-  // 수정된 납입 총액(trendTotalPayment) 계산 로직
   const trendTotalPayment = useMemo(() => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
     
-    // 1번 로직: 조회 기간 내 납입금액 합산
     const inRangeSum = payments
       .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-    // 2번 로직: 조회시작일 이전 포트폴리오 현황 확인
     const priorPortfolios = portfolios.filter(p => p.baseDate && p.baseDate < appliedTrendStartDate);
     if (priorPortfolios.length > 0) {
       const dates = Array.from(new Set(priorPortfolios.map(p => p.baseDate))).sort((a, b) => b.localeCompare(a));
@@ -969,7 +966,6 @@ export default function App() {
       return inRangeSum + pfTotalAmount;
     }
 
-    // 3번 로직: 포트폴리오 현황이 없고 총액 Trend(엑셀 업로드 등) 데이터가 있는 경우
     const priorTrends = trendRows.filter(t => t.date && t.date < appliedTrendStartDate);
     if (priorTrends.length > 0) {
       const sortedPriorTrends = [...priorTrends].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -1346,10 +1342,11 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
-                    const lastRow = sortedTrendRows.length > 0 ? sortedTrendRows[sortedTrendRows.length - 1] : null;
-                    const baseAmountForRatio = lastRow ? Number(lastRow.amount || 0) : 0;
+                    // 요청하신 순차적 비율 계산 로직 (현재 행과 다음 행(더 과거 행) 비교)
+                    const nextRow = sortedTrendRows[index + 1];
+                    const nextAmount = nextRow ? Number(nextRow.amount || 0) : 0;
+                    const ratio = nextRow && nextAmount !== 0 ? (nextAmount - Number(row.amount || 0)) / nextAmount : 0;
 
-                    const ratio = baseAmountForRatio !== 0 ? (Number(row.amount || 0) - baseAmountForRatio) / baseAmountForRatio : 0;
                     const profitRate = trendTotalPayment !== 0 ? (Number(row.amount || 0) - trendTotalPayment) / trendTotalPayment : 0;
                     const profitAmount = Number(row.amount || 0) - trendTotalPayment;
 
