@@ -298,8 +298,12 @@ export default function App() {
     const graphHeight = height - padding * 2;
 
     const amounts = chartData.map(d => Number(d.amount || 0));
-    const minAmt = Math.min(...amounts, 0);
-    const maxAmt = Math.max(...amounts, 100);
+    const rawMinAmt = Math.min(...amounts);
+    const rawMaxAmt = Math.max(...amounts);
+
+    // Y축 범위 계산: 최소값*0.75 ~ 최대값*1.25 (데이터가 모두 0이거나 같을 경우 대비 안전장치 포함)
+    const minAmt = rawMinAmt === 0 && rawMaxAmt === 0 ? 0 : rawMinAmt * 0.75;
+    const maxAmt = rawMinAmt === 0 && rawMaxAmt === 0 ? 100 : rawMaxAmt * 1.25;
     const amtRange = maxAmt - minAmt || 1;
 
     ctx.strokeStyle = '#e2e8f0';
