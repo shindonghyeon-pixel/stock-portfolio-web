@@ -149,7 +149,6 @@ export default function App() {
   const [trendRows, setTrendRows] = useState([]);
   const [selectedTrendIds, setSelectedTrendIds] = useState([]);
   const [deletedTrendIds, setDeletedTrendIds] = useState([]);
-  const [isSavingTrend, setIsSavingTrend] = useState(false);
 
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
   const [successMessage, setSuccessMessage] = useState('');
@@ -459,7 +458,7 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // 요청하신 대로 기존 로직을 제거하고 조회 기간 내 모든 포트폴리오 현황의 일자와 현재금액 총액을 가져오도록 수정
+  // 요청하신 대로 조회 기간 내 모든 포트폴리오 현황 일자/현재금액 및 엑셀 업로드/등록된 데이터를 모두 가져오도록 수정
   const handleCalculateTrend = () => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) {
       showError('시작일자와 종료일자를 반드시 입력해주세요.');
@@ -473,14 +472,14 @@ export default function App() {
       return;
     }
 
-    // 포트폴리오 데이터에서 조회 기간 내에 존재하는 모든 기준일자(baseDate) 추출
-    const availableDates = Array.from(
+    // 1. 포트폴리오 현황에서 조회 기간 내에 존재하는 일자와 금액 집계
+    const portfolioDates = Array.from(
       new Set(
         portfolios
           .map(p => p.baseDate)
           .filter(dt => dt && dt >= start && dt <= end)
       )
-    ).sort();
+    );
 
     const getPortfolioTotalForDate = (dateStr) => {
       const itemsForDate = portfolios.filter(p => p.baseDate === dateStr);
@@ -492,17 +491,34 @@ export default function App() {
       }, 0);
     };
 
-    const newRows = availableDates.map((dt, idx) => {
-      const amount = getPortfolioTotalForDate(dt);
-      return {
-        id: 'trend_' + Date.now() + '_' + idx,
+    const dateMap = new Map();
+
+    // 포트폴리오 데이터를 맵에 먼저 등록
+    portfolioDates.forEach(dt => {
+      dateMap.set(dt, {
+        id: 'trend_pf_' + dt,
         date: dt,
-        amount: amount,
+        amount: getPortfolioTotalForDate(dt),
         isTemp: true
-      };
+      });
     });
 
-    setTrendRows(newRows);
+    // 2. 이미 등록되어 있거나 엑셀 업로드 등으로 로드된 trendRows 데이터도 조회 기간 내에 있다면 병합
+    trendRows.forEach(tr => {
+      if (tr.date && tr.date >= start && tr.date <= end) {
+        if (dateMap.has(tr.date)) {
+          // 포트폴리오 금액이 있고 엑셀 금액이 있다면 엑셀/업로드된 금액을 우선하거나 병합 가능 (여기서는 업로드된 금액 또는 기존 맵 데이터 유지)
+          // 엑셀 업로드로 들어온 값 유지
+          dateMap.set(tr.date, { ...tr });
+        } else {
+          dateMap.set(tr.date, { ...tr });
+        }
+      }
+    });
+
+    const finalRows = Array.from(dateMap.values());
+
+    setTrendRows(finalRows);
     setSuccessMessage('총액 Trend 조회가 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
@@ -682,15 +698,14 @@ export default function App() {
             };
           });
 
-          let updatedTrendList = [];
+          // 엑셀 업로드 시 trendRows 상태 및 DB(trends 컬렉션)에 바로 반영
           setTrendRows(prev => {
             const map = new Map();
             prev.forEach(r => map.set(r.date, r));
             uploadedRows.forEach(r => {
               map.set(r.date, { ...r, id: map.has(r.date) ? map.get(r.date).id : r.id });
             });
-            updatedTrendList = Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
-            return updatedTrendList;
+            return Array.from(map.values());
           });
 
           try {
@@ -843,29 +858,6 @@ export default function App() {
     }
   };
 
-  const handleSaveTrendToDatabase = async () => {
-    if (isSavingTrend) return;
-    setIsSavingTrend(true);
-    try {
-      const batch = writeBatch(db);
-      deletedTrendIds.forEach(id => batch.delete(doc(db, "trends", id)));
-      trendRows.forEach(tr => {
-        const ref = String(tr.id).startsWith('temp_trend_') || String(tr.id).startsWith('trend_') || String(tr.id).startsWith('excel_trend_') ? doc(collection(db, "trends")) : doc(db, "trends", tr.id);
-        const data = { date: tr.date, amount: Number(tr.amount || 0) };
-        if (String(tr.id).startsWith('temp_trend_') || String(tr.id).startsWith('trend_') || String(tr.id).startsWith('excel_trend_')) data.createdAt = serverTimestamp();
-        batch.set(ref, data, { merge: true });
-      });
-      await batch.commit();
-      await fetchTrends();
-      setSuccessMessage('총액 Trend 저장 완료!');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err) {
-      showError(`저장 실패: ${err.message}`);
-    } finally {
-      setIsSavingTrend(false);
-    }
-  };
-
   const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
   const handleStockRowChange = (id, field, val) => {
     setStocks(prev => prev.map(s => {
@@ -1009,9 +1001,13 @@ export default function App() {
   }, [trendTotalPayment, trendProfitRateInput]);
 
   const sortedTrendRows = useMemo(() => {
-    // 요청하신 대로 일자의 역순(최신순)으로 정렬되도록 변경
-    return [...trendRows].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [trendRows]);
+    // 엑셀 업로드 및 조회된 데이터들을 조회 기간 내에서 일자 역순(최신순)으로 정렬
+    const filtered = trendRows.filter(tr => {
+      if (!appliedTrendStartDate || !appliedTrendEndDate) return true;
+      return tr.date && tr.date >= appliedTrendStartDate && tr.date <= appliedTrendEndDate;
+    });
+    return [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [trendRows, appliedTrendStartDate, appliedTrendEndDate]);
 
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
   const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
@@ -1345,7 +1341,6 @@ export default function App() {
                 <button onClick={handleAddTrendRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteTrendRows} disabled={selectedTrendIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTrendIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
                 <button onClick={() => triggerExcelUpload('trend')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
-                <button onClick={handleSaveTrendToDatabase} disabled={isSavingTrend} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingTrend ? '저장 중...' : '저장'}</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
                 <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">납입 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(trendTotalPayment)}원</span></div>
@@ -1357,7 +1352,7 @@ export default function App() {
               <table className="w-full text-left border-collapse min-w-[1000px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={trendRows.length > 0 && selectedTrendIds.length === trendRows.length} onChange={e => setSelectedTrendIds(e.target.checked ? trendRows.map(t => t.id) : [])} /></th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={sortedTrendRows.length > 0 && selectedTrendIds.length === sortedTrendRows.length} onChange={e => setSelectedTrendIds(e.target.checked ? sortedTrendRows.map(t => t.id) : [])} /></th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-48">일자</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44 text-right">금액</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36 text-right">비율</th>
@@ -1367,7 +1362,6 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
-                    // 역순 정렬 기준 마지막 행 (가장 오래된 일자 또는 기준일)
                     const lastRow = sortedTrendRows.length > 0 ? sortedTrendRows[sortedTrendRows.length - 1] : null;
                     const baseAmountForRatio = lastRow ? Number(lastRow.amount || 0) : 0;
 
