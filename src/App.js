@@ -100,6 +100,7 @@ export default function App() {
   
   const fileInputRef = useRef(null);
   const stockFileInputRef = useRef(null);
+  const transactionFileInputRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
   useEffect(() => {
@@ -258,7 +259,7 @@ export default function App() {
 
   const handleDeleteTransactionRows = () => {
     if (selectedTransactionIds.length === 0) return;
-    const targetRealIds = selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_'));
+    const targetRealIds = selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_') && !String(id).startsWith('excel_tx_'));
     setDeletedTransactionIds(prev => [...prev, ...targetRealIds]);
     setTransactions(prev => prev.filter(t => !selectedTransactionIds.includes(t.id)));
     setSelectedTransactionIds([]);
@@ -272,6 +273,9 @@ export default function App() {
     } else if (type === 'stock' && stockFileInputRef.current) {
       stockFileInputRef.current.value = "";
       stockFileInputRef.current.click();
+    } else if (type === 'transaction' && transactionFileInputRef.current) {
+      transactionFileInputRef.current.value = "";
+      transactionFileInputRef.current.click();
     }
   };
 
@@ -346,8 +350,7 @@ export default function App() {
 
           setPayments(prev => [...excelRows, ...prev]);
           setSuccessMessage('납입금액 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
-        } else {
-          // 종목 관리 엑셀 업로드 [은행, 목적, 종목코드, 종목명, 종목 유형, 유형 비율, 통화]
+        } else if (activeUploadType === 'stock') {
           const requiredColumns = ['은행', '목적', '종목코드', '종목명', '종목 유형', '유형 비율', '통화'];
           const missingColumns = requiredColumns.filter(col => !headers.includes(col));
           
@@ -389,6 +392,62 @@ export default function App() {
 
           setStocks(prev => [...excelRows, ...prev]);
           setSuccessMessage('종목 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
+        } else {
+          // 거래현황 엑셀 업로드 [거래일자, 은행, 목적, 종목명, 단가, 매수수량, 매도수량]
+          const requiredColumns = ['거래일자', '은행', '목적', '종목명', '단가', '매수수량', '매도수량'];
+          const missingColumns = requiredColumns.filter(col => !headers.includes(col));
+          
+          if (missingColumns.length > 0) {
+            showError(`필수 열 누락: [ ${missingColumns.join(', ')} ]\n(1행에 '거래일자', '은행', '목적', '종목명', '단가', '매수수량', '매도수량' 열이 있어야 합니다.)`);
+            return;
+          }
+
+          const colIndices = {
+            date: headers.indexOf('거래일자'),
+            bank: headers.indexOf('은행'),
+            purpose: headers.indexOf('목적'),
+            name: headers.indexOf('종목명'),
+            price: headers.indexOf('단가'),
+            buyQty: headers.indexOf('매수수량'),
+            sellQty: headers.indexOf('매도수량'),
+          };
+
+          const dataRows = jsonData.slice(1).filter(row => row && row.length > 0);
+          
+          const excelRows = dataRows.map((row, index) => {
+            const rawDate = row[colIndices.date];
+            const parsedDate = parseExcelDate(rawDate);
+            const bankVal = String(row[colIndices.bank] || '').trim();
+            const purposeVal = String(row[colIndices.purpose] || '연금').trim();
+            const nameVal = String(row[colIndices.name] || '').trim();
+            const rawPrice = String(row[colIndices.price] || '0').replace(/[^0-9]/g, '');
+            const priceNum = parseInt(rawPrice, 10) || 0;
+            const buyQtyNum = parseFloat(String(row[colIndices.buyQty] || '0').replace(/[^0-9.]/g, '')) || 0;
+            const sellQtyNum = parseFloat(String(row[colIndices.sellQty] || '0').replace(/[^0-9.]/g, '')) || 0;
+
+            // 종목 관리에서 일치하는 종목 찾아 코드와 유형 자동 바인딩
+            const matchedStock = stocks.find(s => 
+              (s.bank || '').trim() === bankVal &&
+              (s.purpose || '').trim() === purposeVal &&
+              (s.name || '').trim() === nameVal
+            );
+
+            return {
+              id: 'excel_tx_' + Date.now() + '_' + index,
+              date: parsedDate,
+              bank: bankVal,
+              purpose: ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금',
+              name: nameVal,
+              code: matchedStock ? matchedStock.code : '',
+              category: matchedStock ? matchedStock.category : '',
+              price: priceNum,
+              buyQty: buyQtyNum,
+              sellQty: sellQtyNum,
+            };
+          });
+
+          setTransactions(prev => [...excelRows, ...prev]);
+          setSuccessMessage('거래현황 엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         }
 
         setTimeout(() => setSuccessMessage(''), 4000);
@@ -529,7 +588,7 @@ export default function App() {
       }
 
       for (const tx of transactions) {
-        if (String(tx.id).startsWith('temp_tx_')) {
+        if (String(tx.id).startsWith('temp_tx_') || String(tx.id).startsWith('excel_tx_')) {
           const newDocRef = doc(collection(db, "transactions"));
           batch.set(newDocRef, {
             date: tx.date || getTodayString(),
@@ -613,7 +672,6 @@ export default function App() {
             updated.code = matchedStock.code || '';
             updated.category = matchedStock.category || '';
           } else if (field === 'name') {
-            // 만약 이름이 비었거나 매칭이 안되면 초기화 가능
             updated.code = '';
             updated.category = '';
           }
@@ -736,6 +794,14 @@ export default function App() {
         accept=".xlsx, .xls" 
         className="hidden" 
         ref={stockFileInputRef} 
+        onChange={handleFileChange} 
+      />
+
+      <input 
+        type="file" 
+        accept=".xlsx, .xls" 
+        className="hidden" 
+        ref={transactionFileInputRef} 
         onChange={handleFileChange} 
       />
 
@@ -1203,7 +1269,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. 거래현황 탭 (신규 추가) */}
+        {/* 3. 거래현황 탭 */}
         {activeTab === 'transaction' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             
@@ -1254,6 +1320,14 @@ export default function App() {
                 >
                   <Trash2 size={16} />
                   삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}
+                </button>
+
+                <button 
+                  onClick={() => triggerExcelUpload('transaction')}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm"
+                >
+                  <FileSpreadsheet size={16} className="text-green-600" />
+                  엑셀 업로드
                 </button>
 
                 <button 
@@ -1418,7 +1492,7 @@ export default function App() {
                         <div className="flex flex-col items-center justify-center gap-2">
                           <CheckSquare size={32} className="text-slate-300" />
                           <p>조회된 거래현황 내역이 없습니다.</p>
-                          <p className="text-sm text-slate-400">추가 버튼을 눌러 새로운 거래 내역을 등록해보세요.</p>
+                          <p className="text-sm text-slate-400">추가 버튼을 누르거나 엑셀 파일을 업로드해보세요.</p>
                         </div>
                       </td>
                     </tr>
