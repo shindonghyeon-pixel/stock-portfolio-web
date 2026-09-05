@@ -233,7 +233,6 @@ export default function App() {
       purpose: '연금',
       name: '',
       code: '',
-      category: '',
       price: 0,
       buyQty: 0,
       sellQty: 0,
@@ -425,7 +424,7 @@ export default function App() {
             const buyQtyNum = parseFloat(String(row[colIndices.buyQty] || '0').replace(/[^0-9.]/g, '')) || 0;
             const sellQtyNum = parseFloat(String(row[colIndices.sellQty] || '0').replace(/[^0-9.]/g, '')) || 0;
 
-            // 종목 관리에서 일치하는 종목 찾아 코드와 유형 자동 바인딩
+            // 종목 관리에서 일치하는 종목 찾아 코드 자동 바인딩
             const matchedStock = stocks.find(s => 
               (s.bank || '').trim() === bankVal &&
               (s.purpose || '').trim() === purposeVal &&
@@ -439,7 +438,6 @@ export default function App() {
               purpose: ['연금', 'IRP', 'DC', '기타'].includes(purposeVal) ? purposeVal : '연금',
               name: nameVal,
               code: matchedStock ? matchedStock.code : '',
-              category: matchedStock ? matchedStock.category : '',
               price: priceNum,
               buyQty: buyQtyNum,
               sellQty: sellQtyNum,
@@ -596,7 +594,6 @@ export default function App() {
             purpose: tx.purpose || '연금',
             name: tx.name || '',
             code: tx.code || '',
-            category: tx.category || '',
             price: Number(tx.price || 0),
             buyQty: Number(tx.buyQty || 0),
             sellQty: Number(tx.sellQty || 0),
@@ -610,7 +607,6 @@ export default function App() {
             purpose: tx.purpose || '연금',
             name: tx.name || '',
             code: tx.code || '',
-            category: tx.category || '',
             price: Number(tx.price || 0),
             buyQty: Number(tx.buyQty || 0),
             sellQty: Number(tx.sellQty || 0)
@@ -656,7 +652,7 @@ export default function App() {
     setTransactions(prev => prev.map(tx => {
       if (tx.id === id) {
         const updated = { ...tx, [field]: value };
-        // 만약 은행, 목적, 혹은 종목명이 변경되었다면 종목코드와 종목 유형 자동 바인딩
+        // 만약 은행, 목적, 혹은 종목명이 변경되었다면 종목코드 자동 바인딩
         if (field === 'bank' || field === 'purpose' || field === 'name') {
           const targetBank = field === 'bank' ? value : updated.bank;
           const targetPurpose = field === 'purpose' ? value : updated.purpose;
@@ -670,10 +666,8 @@ export default function App() {
 
           if (matchedStock) {
             updated.code = matchedStock.code || '';
-            updated.category = matchedStock.category || '';
           } else if (field === 'name') {
             updated.code = '';
-            updated.category = '';
           }
         }
         return updated;
@@ -1348,7 +1342,7 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[1100px]">
+              <table className="w-full text-left border-collapse min-w-[1000px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b border-slate-200 bg-slate-50">
@@ -1364,7 +1358,6 @@ export default function App() {
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">목적</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm">종목명</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">종목코드</th>
-                    <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-36">종목 유형</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-32 text-right">단가</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매수수량</th>
                     <th className="py-3 px-4 border-b border-slate-200 font-semibold text-slate-600 text-sm w-28 text-right">매도수량</th>
@@ -1373,7 +1366,7 @@ export default function App() {
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {loadingTransactions && transactions.length === 0 ? (
                     <tr>
-                      <td colSpan="10" className="py-16 text-center text-slate-400">거래현황 데이터를 불러오는 중입니다...</td>
+                      <td colSpan="9" className="py-16 text-center text-slate-400">거래현황 데이터를 불러오는 중입니다...</td>
                     </tr>
                   ) : filteredTransactions.length > 0 ? (
                     filteredTransactions.map((tx) => {
@@ -1447,15 +1440,6 @@ export default function App() {
                           <td className="py-2 px-4">
                             <input 
                               type="text" 
-                              value={tx.category || ''}
-                              onChange={(e) => handleTransactionRowChange(tx.id, 'category', e.target.value)}
-                              placeholder="종목 유형"
-                              className="w-full px-3 py-1.5 border border-slate-200 rounded-md text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none bg-white text-slate-900"
-                            />
-                          </td>
-                          <td className="py-2 px-4">
-                            <input 
-                              type="text" 
                               value={tx.price === 0 ? '' : formatCurrency(tx.price)}
                               onChange={(e) => {
                                 const raw = e.target.value.replace(/[^0-9]/g, '');
@@ -1488,7 +1472,7 @@ export default function App() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan="10" className="py-16 text-center text-slate-500">
+                      <td colSpan="9" className="py-16 text-center text-slate-500">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <CheckSquare size={32} className="text-slate-300" />
                           <p>조회된 거래현황 내역이 없습니다.</p>
