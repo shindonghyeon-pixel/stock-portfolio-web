@@ -37,11 +37,8 @@ const formatCurrency = (amount) => {
   return Number(amount).toLocaleString('ko-KR');
 };
 
-// 엑셀 날짜(숫자 또는 텍스트)를 YYYY-MM-DD 형식으로 변환하는 강력한 파서
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
-  
-  // 1. 엑셀 고유의 시리얼 넘버(숫자) 형식 처리
   if (typeof val === 'number') {
     const date = new Date(Math.round((val - 25569) * 86400 * 1000));
     const y = date.getUTCFullYear();
@@ -49,8 +46,6 @@ const parseExcelDate = (val) => {
     const d = String(date.getUTCDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }
-
-  // 2. 문자열 날짜 처리
   if (typeof val === 'string') {
     let clean = val.trim().replace(/[\.\/]/g, '-');
     if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
@@ -74,9 +69,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('payment');
   const [payments, setPayments] = useState([]);
   
-  // UI 상태 관리
   const [loading, setLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false); // 무한 로딩 방지용 분리
+  const [isSaving, setIsSaving] = useState(false); // 무한 로딩 원천 방지 상태
   
   const [searchYearInput, setSearchYearInput] = useState('');
   const [appliedSearchYear, setAppliedSearchYear] = useState('');
@@ -87,7 +81,6 @@ export default function App() {
   const [successMessage, setSuccessMessage] = useState('');
   const fileInputRef = useRef(null);
 
-  // 초기화 및 CSS 안전 로딩
   useEffect(() => {
     if (document.getElementById('tailwind-cdn')) {
       setIsTailwindLoaded(true);
@@ -101,7 +94,6 @@ export default function App() {
     fetchPayments();
   }, []);
 
-  // 1. Firebase 데이터 불러오기
   const fetchPayments = async () => {
     try {
       setLoading(true);
@@ -112,9 +104,10 @@ export default function App() {
       }));
       dataList.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       setPayments(dataList);
-      setDeletedIds([]); // 삭제 대기열 초기화
+      setDeletedIds([]);
     } catch (error) {
       console.error("데이터 불러오기 실패:", error);
+      showError('데이터를 불러오지 못했습니다. Firebase 설정을 확인해주세요.');
     } finally {
       setLoading(false);
     }
@@ -125,10 +118,7 @@ export default function App() {
     setSelectedIds([]); 
   };
 
-  // 2. 임시 행 추가 (저장 버튼 클릭 시 DB에 반영됨)
   const handleAddRow = () => {
-    setAppliedSearchYear(''); // 새 행이 보이도록 검색어 초기화
-    setSearchYearInput('');
     const newRow = {
       id: 'temp_' + Date.now(),
       date: getTodayString(),
@@ -139,14 +129,10 @@ export default function App() {
     setPayments(prev => [newRow, ...prev]);
   };
 
-  // 3. 삭제 버튼 (선택한 행을 화면에서 지우고 삭제 대기열로 이동)
   const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
-    
-    // 임시 ID가 아닌 진짜 DB ID들만 삭제 대기열로 넘김
     const targetRealIds = selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'));
     setDeletedIds(prev => [...prev, ...targetRealIds]);
-
     setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
     setSelectedIds([]);
   };
@@ -162,7 +148,6 @@ export default function App() {
     setErrorModal({ isOpen: true, message });
   };
 
-  // 4. 엑셀 업로드 처리 (raw: true 옵션으로 완벽한 날짜 파싱)
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -186,8 +171,6 @@ export default function App() {
 
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
-        
-        // 날짜를 정상적으로 파싱하기 위해 반드시 raw: true 옵션 사용
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true });
 
         if (jsonData.length < 2) {
@@ -216,7 +199,6 @@ export default function App() {
         const excelRows = dataRows.map((row, index) => {
           const rawDate = row[colIndices.date];
           const parsedDate = parseExcelDate(rawDate);
-
           const rawAmount = String(row[colIndices.amount] || '0').replace(/[^0-9]/g, '');
           const amountNum = parseInt(rawAmount, 10) || 0;
 
@@ -229,10 +211,8 @@ export default function App() {
           };
         });
 
-        setAppliedSearchYear(''); // 엑셀 데이터가 보이도록 검색 조건 초기화
-        setSearchYearInput('');
         setPayments(prev => [...excelRows, ...prev]);
-        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 최종 반영하세요.');
+        setSuccessMessage('엑셀이 로드되었습니다. [저장] 버튼을 눌러 DB에 반영하세요.');
         setTimeout(() => setSuccessMessage(''), 4000);
       } catch (err) {
         console.error(err);
@@ -242,62 +222,57 @@ export default function App() {
     reader.readAsArrayBuffer(file);
   };
 
-  // 5. DB 일괄 저장 로직 (에러 발생 시에도 무한 로딩에 빠지지 않도록 처리)
+  // [저장] 버튼 로직: 타임아웃 및 예외 처리 안전장치 적용
   const handleSaveToDatabase = async () => {
-    if (isSaving) return; 
+    if (isSaving) return;
     
-    try {
-      setIsSaving(true);
-      let errorCount = 0;
+    setIsSaving(true);
+    console.log("=== 저장 작업 시작 ===");
 
-      // A. 삭제 요청된 항목 처리
+    // 만약 통신이 10초 이상 지연될 경우 무한 로딩을 막기 위한 타임아웃 장치
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("서버 응답 시간이 초과되었습니다. 네트워크 연결을 확인해주세요.")), 10000)
+    );
+
+    const saveExecution = async () => {
+      // 1. 삭제 대기열 처리
       for (const id of deletedIds) {
-        try {
-          await deleteDoc(doc(db, "payments", id));
-        } catch (e) {
-          console.error(`삭제 실패 [${id}]:`, e);
-          errorCount++;
-        }
+        await deleteDoc(doc(db, "payments", id));
       }
 
-      // B. 화면에 있는 항목들 추가 또는 수정
+      // 2. 추가 및 수정 처리
       for (const payment of payments) {
-        try {
-          if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
-            await addDoc(collection(db, "payments"), {
-              date: payment.date || getTodayString(),
-              bank: payment.bank || '미래에셋',
-              purpose: payment.purpose || '연금',
-              amount: Number(payment.amount || 0),
-              createdAt: serverTimestamp()
-            });
-          } else {
-            await updateDoc(doc(db, "payments", payment.id), {
-              date: payment.date || getTodayString(),
-              bank: payment.bank || '미래에셋',
-              purpose: payment.purpose || '연금',
-              amount: Number(payment.amount || 0)
-            });
-          }
-        } catch (e) {
-          console.error(`저장 실패 [${payment.id}]:`, e);
-          errorCount++;
+        if (String(payment.id).startsWith('temp_') || String(payment.id).startsWith('excel_')) {
+          await addDoc(collection(db, "payments"), {
+            date: payment.date || getTodayString(),
+            bank: payment.bank || '미래에셋',
+            purpose: payment.purpose || '연금',
+            amount: Number(payment.amount || 0),
+            createdAt: serverTimestamp()
+          });
+        } else {
+          const docRef = doc(db, "payments", payment.id);
+          await updateDoc(docRef, {
+            date: payment.date || getTodayString(),
+            bank: payment.bank || '미래에셋',
+            purpose: payment.purpose || '연금',
+            amount: Number(payment.amount || 0)
+          });
         }
       }
+    };
 
-      await fetchPayments(); // 성공적으로 완료되면 최신 데이터 불러오기
-
-      if (errorCount > 0) {
-        showError(`저장이 완료되었으나, ${errorCount}건의 처리에 실패했습니다.`);
-      } else {
-        setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
-        setTimeout(() => setSuccessMessage(''), 3000);
-      }
+    try {
+      await Promise.race([saveExecution(), timeoutPromise]);
+      await fetchPayments();
+      setSuccessMessage('성공적으로 데이터베이스에 저장되었습니다!');
+      setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
-      console.error("저장 중 치명적 오류:", error);
-      showError('저장 중 통신 오류가 발생했습니다.');
+      console.error("저장 중 에러 발생:", error);
+      showError(`저장 실패: ${error.message}`);
     } finally {
-      setIsSaving(false); // 무조건 로딩 상태 해제 (무한 로딩 방지)
+      setIsSaving(false); // 어떤 상황에서도 무조건 로딩 해제
+      console.log("=== 저장 작업 종료 (로딩 해제 완료) ===");
     }
   };
 
@@ -337,11 +312,10 @@ export default function App() {
     return filteredPayments.reduce((sum, current) => sum + Number(current.amount || 0), 0);
   }, [filteredPayments]);
 
-  // CSS 로딩 전에는 뼈대 화면 렌더링 방지
   if (!isTailwindLoaded) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', fontFamily: 'sans-serif', color: '#64748b' }}>
-        디자인 요소를 불러오는 중입니다...
+        화면을 준비 중입니다...
       </div>
     );
   }
@@ -574,7 +548,7 @@ export default function App() {
                             <option value="연금">연금</option>
                             <option value="IRP">IRP</option>
                             <option value="DC">DC</option>
-                            <option value="기탈">기타</option>
+                            <option value="기타">기타</option>
                           </select>
                         </td>
                         <td className="py-2 px-4">
