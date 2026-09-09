@@ -17,7 +17,8 @@ import {
   Calculator,
   LineChart,
   X,
-  Play
+  Play,
+  HelpCircle
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -176,6 +177,7 @@ export default function App() {
   const [isTrendChartOpen, setIsTrendChartOpen] = useState(false);
 
   const [errorModal, setErrorModal] = useState({ isOpen: false, message: '' });
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
   const [successMessage, setSuccessMessage] = useState('');
   
   const fileInputRef = useRef(null);
@@ -541,10 +543,8 @@ export default function App() {
     }
   };
 
-  // 포트폴리오 계산 (일자 비교 로직 제거됨)
-  const handleCalculatePortfolio = async () => {
-    const baseDate = pfBaseDate || getTodayString();
-    
+  // 포트폴리오 실질 계산 수행 함수
+  const executePortfolioCalculation = async (baseDate) => {
     let externalPriceMap = new Map();
     try {
       const apiUrl = 'https://script.google.com/macros/s/AKfycbzsinoBtvlVMUQC69g2Aa6EmRM747h8ffB5_r1zM5hf1FReRQbLgJy-jHMgn6J7xFfC/exec';
@@ -683,23 +683,52 @@ export default function App() {
       });
     }
 
-    const existingManualItems = portfolios.filter(p => p.isManual);
-    existingManualItems.forEach(manual => {
+    // 2. 전일자에 수동으로 입력한 데이터를 그대로 가지고 옴
+    const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
+    prevManualItems.forEach(manual => {
       const currentAmount = Number(manual.currentAmount || 0);
       const purchaseAmount = Number(manual.purchaseAmount || 0);
       const evalProfitLoss = currentAmount - purchaseAmount;
 
       newPfList.push({
         ...manual,
-        id: manual.id || ('manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9)),
+        id: 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
         baseDate: baseDate,
+        purchaseAmount: purchaseAmount,
+        currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss
       });
     });
 
-    setPortfolios(newPfList);
+    // 1. 해당 기준일자 데이터만 삭제(교체)하고 다른 날짜의 데이터는 그대로 유지
+    setPortfolios(prev => [
+      ...prev.filter(p => p.baseDate !== baseDate),
+      ...newPfList
+    ]);
+
     setSuccessMessage('포트폴리오 계산이 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
+  // 포트폴리오 계산 버튼 핸들러 (1번 조건 및 2번 조건 적용)
+  const handleCalculatePortfolio = async () => {
+    const baseDate = pfBaseDate || getTodayString();
+
+    // 1. 기준일자에 해당하는 레코드가 존재하는지 확인
+    const hasExistingData = portfolios.some(p => p.baseDate === baseDate);
+
+    if (hasExistingData) {
+      setConfirmModal({
+        isOpen: true,
+        message: "기준일자의 데이터가 존재하는데 다시 만들까요?",
+        onConfirm: () => {
+          setConfirmModal({ isOpen: false, message: '', onConfirm: null });
+          executePortfolioCalculation(baseDate);
+        }
+      });
+    } else {
+      executePortfolioCalculation(baseDate);
+    }
   };
 
   const handleCalculateTrend = () => {
@@ -1186,6 +1215,35 @@ export default function App() {
             <div className="flex items-center gap-3 text-rose-600 mb-4"><AlertCircle size={28} /><h3 className="text-xl font-bold">오류 안내</h3></div>
             <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">{errorModal.message}</div>
             <div className="flex justify-end"><button onClick={() => setErrorModal({ isOpen: false, message: '' })} className="px-6 py-2 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700">확인</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* 재계산 확인 팝업 (예/아니오) */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 text-amber-600 mb-4">
+              <HelpCircle size={28} />
+              <h3 className="text-xl font-bold text-slate-900">계산 확인</h3>
+            </div>
+            <div className="text-slate-600 mb-6 whitespace-pre-line leading-relaxed">
+              {confirmModal.message}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button 
+                onClick={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })} 
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-medium transition-colors"
+              >
+                아니오
+              </button>
+              <button 
+                onClick={confirmModal.onConfirm} 
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition-colors"
+              >
+                예
+              </button>
+            </div>
           </div>
         </div>
       )}
