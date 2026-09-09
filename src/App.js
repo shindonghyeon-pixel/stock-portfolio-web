@@ -635,8 +635,7 @@ export default function App() {
       const sellQty = todayItem.sellQty;
       const buyAmount = todayItem.buyAmount;
 
-      const qty = prevQty + buyQty - sellQty;
-      if (qty <= 0) continue;
+      const qty = Math.max(0, prevQty + buyQty - sellQty);
 
       const denom = prevQty + buyQty;
       const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
@@ -662,6 +661,9 @@ export default function App() {
       const sellProfitLoss = prevSellProfitLoss + todaySellProfitLoss;
 
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
+
+      // 수량이 0이더라도 당일 매수가 있었거나 매매손익이 존재하는 경우 포트폴리오에 포함
+      if (qty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
 
       newPfList.push({
         id: 'pf_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
