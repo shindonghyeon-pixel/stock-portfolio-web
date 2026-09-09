@@ -134,10 +134,12 @@ export default function App() {
   const [isSavingTransactions, setIsSavingTransactions] = useState(false);
   const [selectedTransactionIds, setSelectedTransactionIds] = useState([]);
   const [deletedTransactionIds, setDeletedTransactionIds] = useState([]);
-  const [txStartDate, setTxStartDate] = useState('');
-  const [txEndDate, setTxEndDate] = useState('');
+  const [txStartDate, setTxStartDate] = useState(getTodayString());
+  const [txEndDate, setTxEndDate] = useState(getTodayString());
   const [appliedTxStartDate, setAppliedTxStartDate] = useState('');
   const [appliedTxEndDate, setAppliedTxEndDate] = useState('');
+  // 거래현황 현재 포커스 레코드 ID (Current Record Indicator)
+  const [activeTransactionId, setActiveTransactionId] = useState(null);
 
   // 4. 포트폴리오 현황 상태
   const [portfolios, setPortfolios] = useState([]);
@@ -192,7 +194,6 @@ export default function App() {
 
   const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   
-  // 종목 관리: 고정 자동 정렬을 제거하고, 선택한 primary/secondary 필드 기준 정렬 적용
   const filteredStocks = useMemo(() => {
     return [...stocks].sort((a, b) => {
       const getVal = (item, fieldKey) => (item[fieldKey] || '').toString().trim();
@@ -712,24 +713,27 @@ export default function App() {
     }, ...prev]);
   };
 
+  // 종목 추가 버튼 클릭 시 항상 첫 번째(최상단) 위치에 빈 레코드 생성 및 커서 이동
   const handleAddStockRow = () => {
     const newId = 'temp_stock_' + Date.now();
-    setStocks(prev => [...prev, {
+    setStocks(prev => [{
       id: newId,
-      bank: '미래에셋',
+      bank: '',
       purpose: '연금',
       code: '',
       name: '',
       category: '',
       ratio: 0,
       currency: 'KRW',
-    }]);
+    }, ...prev]);
     setActiveStockId(newId);
   };
 
+  // 거래현황 추가 버튼 클릭 시 항상 첫 번째(최상단) 위치에 빈 레코드 생성 및 커서 이동
   const handleAddTransactionRow = () => {
+    const newId = 'temp_tx_' + Date.now();
     setTransactions(prev => [{
-      id: 'temp_tx_' + Date.now(),
+      id: newId,
       date: getTodayString(),
       bank: '',
       purpose: '연금',
@@ -740,6 +744,7 @@ export default function App() {
       buyQty: 0,
       sellQty: 0,
     }, ...prev]);
+    setActiveTransactionId(newId);
   };
 
   const handleDeleteRows = () => {
@@ -1293,7 +1298,7 @@ export default function App() {
                       <tr 
                         key={stock.id} 
                         onClick={() => setActiveStockId(stock.id)}
-                        className={`hover:bg-slate-50 transition-colors ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-amber-50/50' : ''}`}
+                        className={`hover:bg-slate-50 transition-colors ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-amber-100/70 font-medium' : ''}`}
                       >
                         <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
                         
@@ -1411,7 +1416,12 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><Calendar size={16} className="text-slate-400" /><input type="date" value={txStartDate} onChange={e => setTxStartDate(e.target.value)} className="text-sm outline-none bg-transparent" /><span className="text-slate-400">~</span><input type="date" value={txEndDate} onChange={e => setTxEndDate(e.target.value)} className="text-sm outline-none bg-transparent" /></div>
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+                  <Calendar size={16} className="text-slate-400" />
+                  <input type="date" value={txStartDate} onChange={e => setTxStartDate(e.target.value)} className="text-sm outline-none bg-transparent" />
+                  <span className="text-slate-400">~</span>
+                  <input type="date" value={txEndDate} onChange={e => setTxEndDate(e.target.value)} className="text-sm outline-none bg-transparent" />
+                </div>
                 <button onClick={() => { setAppliedTxStartDate(txStartDate); setAppliedTxEndDate(txEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
                 <button onClick={handleAddTransactionRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteTransactionRows} disabled={selectedTransactionIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTransactionIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}</button>
@@ -1421,10 +1431,12 @@ export default function App() {
               <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredTransactions.length} 건</span></div>
             </div>
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[1100px]">
+              <table className="w-full text-left border-collapse min-w-[1150px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredTransactions.length > 0 && selectedTransactionIds.length === filteredTransactions.length} onChange={e => setSelectedTransactionIds(e.target.checked ? filteredTransactions.map(t => t.id) : [])} /></th>
+                    {/* Current Record Indicator 헤더 */}
+                    <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">거래일자</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-32">목적</th>
@@ -1437,23 +1449,41 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredTransactions.length > 0 ? filteredTransactions.map(tx => {
+                  {filteredTransactions.length > 0 ? filteredTransactions.map((tx, idx) => {
                     const rowNames = Array.from(new Set(stocks.filter(s => (s.bank || '').trim() === (tx.bank || '').trim() && (s.purpose || '').trim() === (tx.purpose || '').trim()).map(s => s.name?.trim()).filter(Boolean)));
+                    const isActive = activeTransactionId === tx.id;
+
                     return (
-                      <tr key={tx.id} className={`hover:bg-slate-50 ${selectedTransactionIds.includes(tx.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <tr 
+                        key={tx.id} 
+                        onClick={() => setActiveTransactionId(tx.id)}
+                        className={`hover:bg-slate-50 transition-colors ${selectedTransactionIds.includes(tx.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-amber-100/70 font-medium' : ''}`}
+                      >
                         <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedTransactionIds.includes(tx.id)} onChange={() => setSelectedTransactionIds(prev => prev.includes(tx.id) ? prev.filter(i => i !== tx.id) : [...prev, tx.id])} /></td>
-                        <td className="py-2 px-4"><input type="date" value={tx.date || ''} onChange={e => handleTransactionRowChange(tx.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                        <td className="py-2 px-4"><select value={tx.bank || ''} onChange={e => handleTransactionRowChange(tx.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
-                        <td className="py-2 px-4"><select value={tx.purpose || '연금'} onChange={e => handleTransactionRowChange(tx.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
-                        <td className="py-2 px-4"><select value={tx.name || ''} onChange={e => handleTransactionRowChange(tx.id, 'name', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">종목명 선택</option>{rowNames.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
-                        <td className="py-2 px-4"><input type="text" value={tx.code || ''} onChange={e => handleTransactionRowChange(tx.id, 'code', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                        <td className="py-2 px-4 text-center"><input type="text" value={tx.currency || 'KRW'} onChange={e => handleTransactionRowChange(tx.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
-                        <td className="py-2 px-4 text-right"><input type="text" value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)} onChange={e => handleTransactionRowChange(tx.id, 'price', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white font-medium" /></td>
-                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.buyQty === 0 ? '' : tx.buyQty} onChange={e => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
-                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.sellQty === 0 ? '' : tx.sellQty} onChange={e => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        
+                        {/* Current Record Indicator 필드 */}
+                        <td className="py-3 px-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {isActive ? (
+                              <Play size={12} className="text-amber-600 fill-amber-600 animate-pulse" />
+                            ) : (
+                              <span className="text-xs text-slate-300 font-mono">{idx + 1}</span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-2 px-4"><input type="date" value={tx.date || ''} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><select value={tx.bank || ''} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></td>
+                        <td className="py-2 px-4"><select value={tx.purpose || '연금'} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                        <td className="py-2 px-4"><select value={tx.name || ''} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'name', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">종목명 선택</option>{rowNames.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
+                        <td className="py-2 px-4"><input type="text" value={tx.code || ''} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'code', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-center"><input type="text" value={tx.currency || 'KRW'} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="text" value={tx.price === 0 || tx.price === '' ? '' : formatCurrency(tx.price, tx.currency)} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'price', parseFloat(e.target.value.replace(/[^0-9.]/g, '')) || 0)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white font-medium" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.buyQty === 0 ? '' : tx.buyQty} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'buyQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" step="any" value={tx.sellQty === 0 ? '' : tx.sellQty} onFocus={() => setActiveTransactionId(tx.id)} onChange={e => handleTransactionRowChange(tx.id, 'sellQty', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
                       </tr>
                     );
-                  }) : <tr><td colSpan="10" className="py-16 text-center text-slate-500">조회된 거래현황 내역이 없습니다.</td></tr>}
+                  }) : <tr><td colSpan="11" className="py-16 text-center text-slate-500">조회된 거래현황 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
