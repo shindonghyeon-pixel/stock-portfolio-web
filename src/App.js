@@ -762,9 +762,12 @@ export default function App() {
 
   const handleAddTransactionRow = () => {
     const newId = 'temp_tx_' + Date.now();
+    // 현재 적용된 조회 기간 내의 날짜로 자동 설정 (조회 필터 설정 시 화면에서 사라지는 문제 방지)
+    const initialDate = appliedTxEndDate || appliedTxStartDate || getTodayString();
+
     setTransactions(prev => [{
       id: newId,
-      date: getTodayString(),
+      date: initialDate,
       bank: '',
       purpose: '연금',
       name: '',
