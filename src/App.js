@@ -16,7 +16,8 @@ import {
   ArrowLeftRight,
   Calculator,
   LineChart,
-  X
+  X,
+  Play
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -119,6 +120,13 @@ export default function App() {
   // 종목 관리 직접 입력 모드 상태
   const [customStockBankRows, setCustomStockBankRows] = useState({});
   const [customStockPurposeRows, setCustomStockPurposeRows] = useState({});
+  // 종목 관리 정렬/조회 필드 상태
+  const [stockSortPrimary, setStockSortPrimary] = useState('bank');
+  const [stockSortSecondary, setStockSortSecondary] = useState('purpose');
+  const [appliedStockSortPrimary, setAppliedStockSortPrimary] = useState('bank');
+  const [appliedStockSortSecondary, setAppliedStockSortSecondary] = useState('purpose');
+  // 종목 관리 현재 포커스 레코드 ID (Current Record Indicator)
+  const [activeStockId, setActiveStockId] = useState(null);
 
   // 3. 거래현황 상태
   const [transactions, setTransactions] = useState([]);
@@ -166,11 +174,10 @@ export default function App() {
   const chartCanvasRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
-  // ==================== [useMemo 정의를 최상단으로 이동] ====================
+  // ==================== [useMemo 정의] ====================
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
   const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
 
-  // 종목 관리 전용 동적 은행/목적 드롭다운 옵션 목록 (기본 추천 목록 + DB 및 엑셀 데이터 연동)
   const stockBankOptions = useMemo(() => {
     const defaultList = ['미래에셋', 'KB증권', '삼성증권'];
     const currentList = stocks.map(s => s.bank?.trim()).filter(Boolean);
@@ -185,19 +192,24 @@ export default function App() {
 
   const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   
+  // 종목 관리: 고정 자동 정렬을 제거하고, 선택한 primary/secondary 필드 기준 정렬 적용
   const filteredStocks = useMemo(() => {
     return [...stocks].sort((a, b) => {
-      const bankA = (a.bank || '').trim();
-      const bankB = (b.bank || '').trim();
-      if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
-      const purposeA = (a.purpose || '').trim();
-      const purposeB = (b.purpose || '').trim();
-      if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
-      const codeA = (a.code || '').trim();
-      const codeB = (b.code || '').trim();
-      return codeA.localeCompare(codeB, 'ko');
+      const getVal = (item, fieldKey) => (item[fieldKey] || '').toString().trim();
+      
+      const val1A = getVal(a, appliedStockSortPrimary);
+      const val1B = getVal(b, appliedStockSortPrimary);
+      
+      if (val1A !== val1B) {
+        return val1A.localeCompare(val1B, 'ko');
+      }
+      
+      const val2A = getVal(a, appliedStockSortSecondary);
+      const val2B = getVal(b, appliedStockSortSecondary);
+      
+      return val2A.localeCompare(val2B, 'ko');
     });
-  }, [stocks]);
+  }, [stocks, appliedStockSortPrimary, appliedStockSortSecondary]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
@@ -262,7 +274,6 @@ export default function App() {
     });
     return [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   }, [trendRows, appliedTrendStartDate, appliedTrendEndDate]);
-  // ====================================================================
 
   useEffect(() => {
     if (document.getElementById('tailwind-cdn')) {
@@ -283,7 +294,6 @@ export default function App() {
     fetchExchangeRate();
   }, []);
 
-  // 꺾은선 그래프 그리기 효과
   useEffect(() => {
     if (!isTrendChartOpen) return;
     const canvas = chartCanvasRef.current;
@@ -317,32 +327,25 @@ export default function App() {
     const rawMinAmt = Math.min(...amounts);
     const rawMaxAmt = Math.max(...amounts);
 
-    // 천만원 단위 (10,000,000)
     const unit = 10_000_000;
-    // 최소값: 천만원 단위 버림 (Math.floor)
     let minAmt = Math.floor(rawMinAmt / unit) * unit;
-    // 최대값: 천만원 단위 올림 (Math.ceil)
     let maxAmt = Math.ceil(rawMaxAmt / unit) * unit;
 
-    // 만약 최소값과 최대값이 같거나 데이터가 0인 경우 여유 공간 부여
     if (minAmt === maxAmt) {
       minAmt = minAmt - unit;
       maxAmt = maxAmt + unit;
     }
 
     const amtRange = maxAmt - minAmt || 1;
-    // 천만원 단위 구간(스텝) 수 계산
     const stepCount = Math.round(amtRange / unit);
 
     ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 1;
 
-    // 각 천만원 단위마다 그리드 라인 및 눈금 표시
     for (let i = 0; i <= stepCount; i++) {
       const yVal = minAmt + (unit * i);
       const yPos = height - padding - (graphHeight * (yVal - minAmt)) / amtRange;
 
-      // 캔버스 영역 내에 들어오는 경우에만 라인 및 텍스트 그리기
       if (yPos >= padding - 10 && yPos <= height - padding + 10) {
         ctx.beginPath();
         ctx.moveTo(padding, yPos);
@@ -428,17 +431,6 @@ export default function App() {
         id: docSnap.id,
         ...docSnap.data()
       }));
-      dataList.sort((a, b) => {
-        const bankA = (a.bank || '').trim();
-        const bankB = (b.bank || '').trim();
-        if (bankA !== bankB) return bankA.localeCompare(bankB, 'ko');
-        const purposeA = (a.purpose || '').trim();
-        const purposeB = (b.purpose || '').trim();
-        if (purposeA !== purposeB) return purposeA.localeCompare(purposeB, 'ko');
-        const codeA = (a.code || '').trim();
-        const codeB = (b.code || '').trim();
-        return codeA.localeCompare(codeB, 'ko');
-      });
       setStocks(dataList);
       setDeletedStockIds([]);
     } catch (error) {
@@ -721,8 +713,9 @@ export default function App() {
   };
 
   const handleAddStockRow = () => {
+    const newId = 'temp_stock_' + Date.now();
     setStocks(prev => [...prev, {
-      id: 'temp_stock_' + Date.now(),
+      id: newId,
       bank: '미래에셋',
       purpose: '연금',
       code: '',
@@ -731,6 +724,7 @@ export default function App() {
       ratio: 0,
       currency: 'KRW',
     }]);
+    setActiveStockId(newId);
   };
 
   const handleAddTransactionRow = () => {
@@ -1231,7 +1225,41 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <button onClick={fetchStocks} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                {/* 조회 조건 1차 정렬 필드 */}
+                <select 
+                  value={stockSortPrimary} 
+                  onChange={e => setStockSortPrimary(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white font-medium text-slate-700 outline-none focus:border-indigo-500"
+                >
+                  <option value="bank">은행</option>
+                  <option value="purpose">목적</option>
+                  <option value="code">종목코드</option>
+                  <option value="name">종목명</option>
+                  <option value="category">종목 유형</option>
+                </select>
+
+                {/* 조회 조건 2차 정렬 필드 */}
+                <select 
+                  value={stockSortSecondary} 
+                  onChange={e => setStockSortSecondary(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white font-medium text-slate-700 outline-none focus:border-indigo-500"
+                >
+                  <option value="purpose">목적</option>
+                  <option value="bank">은행</option>
+                  <option value="code">종목코드</option>
+                  <option value="name">종목명</option>
+                  <option value="category">종목 유형</option>
+                </select>
+
+                <button 
+                  onClick={() => {
+                    setAppliedStockSortPrimary(stockSortPrimary);
+                    setAppliedStockSortSecondary(stockSortSecondary);
+                  }} 
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                >
+                  <Search size={16} />조회
+                </button>
                 <button onClick={handleAddStockRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteStockRows} disabled={selectedStockIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedStockIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedStockIds.length > 0 && `(${selectedStockIds.length})`}</button>
                 <button onClick={() => triggerExcelUpload('stock')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
@@ -1240,10 +1268,12 @@ export default function App() {
               <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">등록된 종목 수:</span><span className="text-base font-bold text-slate-800">{stocks.length} 개</span></div>
             </div>
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse min-w-[1000px]">
+              <table className="w-full text-left border-collapse min-w-[1050px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={stocks.length > 0 && selectedStockIds.length === stocks.length} onChange={e => setSelectedStockIds(e.target.checked ? stocks.map(s => s.id) : [])} /></th>
+                    {/* Current Record Indicator 헤더 */}
+                    <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">은행</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">목적</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">종목코드</th>
@@ -1254,15 +1284,31 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredStocks.length > 0 ? filteredStocks.map(stock => {
+                  {filteredStocks.length > 0 ? filteredStocks.map((stock, idx) => {
                     const isCustomBank = customStockBankRows[stock.id] || (stock.bank && !stockBankOptions.includes(stock.bank));
                     const isCustomPurpose = customStockPurposeRows[stock.id] || (stock.purpose && !stockPurposeOptions.includes(stock.purpose));
+                    const isActive = activeStockId === stock.id;
 
                     return (
-                      <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <tr 
+                        key={stock.id} 
+                        onClick={() => setActiveStockId(stock.id)}
+                        className={`hover:bg-slate-50 transition-colors ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-amber-50/50' : ''}`}
+                      >
                         <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
                         
-                        {/* 은행 필드 (자동 옵션 생성 + 직접 입력 전환) */}
+                        {/* Current Record Indicator 필드 */}
+                        <td className="py-3 px-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {isActive ? (
+                              <Play size={12} className="text-amber-600 fill-amber-600 animate-pulse" />
+                            ) : (
+                              <span className="text-xs text-slate-300 font-mono">{idx + 1}</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* 은행 필드 */}
                         <td className="py-2 px-4">
                           {isCustomBank ? (
                             <div className="flex items-center gap-1">
@@ -1270,6 +1316,7 @@ export default function App() {
                                 type="text" 
                                 value={stock.bank || ''} 
                                 onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} 
+                                onFocus={() => setActiveStockId(stock.id)}
                                 placeholder="은행 입력" 
                                 className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" 
                               />
@@ -1284,6 +1331,7 @@ export default function App() {
                           ) : (
                             <select 
                               value={stock.bank || ''} 
+                              onFocus={() => setActiveStockId(stock.id)}
                               onChange={e => {
                                 const val = e.target.value;
                                 if (val === '__custom__') {
@@ -1302,7 +1350,7 @@ export default function App() {
                           )}
                         </td>
 
-                        {/* 목적 필드 (자동 옵션 생성 + 직접 입력 전환) */}
+                        {/* 목적 필드 */}
                         <td className="py-2 px-4">
                           {isCustomPurpose ? (
                             <div className="flex items-center gap-1">
@@ -1310,6 +1358,7 @@ export default function App() {
                                 type="text" 
                                 value={stock.purpose || ''} 
                                 onChange={e => handleStockRowChange(stock.id, 'purpose', e.target.value)} 
+                                onFocus={() => setActiveStockId(stock.id)}
                                 placeholder="목적 입력" 
                                 className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" 
                               />
@@ -1324,6 +1373,7 @@ export default function App() {
                           ) : (
                             <select 
                               value={stock.purpose || ''} 
+                              onFocus={() => setActiveStockId(stock.id)}
                               onChange={e => {
                                 const val = e.target.value;
                                 if (val === '__custom__') {
@@ -1342,14 +1392,14 @@ export default function App() {
                           )}
                         </td>
 
-                        <td className="py-2 px-4"><input type="text" value={stock.code || ''} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                        <td className="py-2 px-4"><input type="text" value={stock.name || ''} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                        <td className="py-2 px-4"><input type="text" value={stock.category || ''} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                        <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
-                        <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                        <td className="py-2 px-4"><input type="text" value={stock.code || ''} onFocus={() => setActiveStockId(stock.id)} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><input type="text" value={stock.name || ''} onFocus={() => setActiveStockId(stock.id)} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><input type="text" value={stock.category || ''} onFocus={() => setActiveStockId(stock.id)} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onFocus={() => setActiveStockId(stock.id)} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onFocus={() => setActiveStockId(stock.id)} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
                       </tr>
                     );
-                  }) : <tr><td colSpan="8" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
+                  }) : <tr><td colSpan="9" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
