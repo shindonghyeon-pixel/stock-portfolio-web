@@ -232,7 +232,7 @@ export default function App() {
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
       if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(a.purpose || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
@@ -607,15 +607,19 @@ export default function App() {
     todayTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
       if (!todayTxMap.has(key)) {
-        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0 });
+        todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 });
       }
       const item = todayTxMap.get(key);
       const bQ = Number(t.buyQty || 0);
       const sQ = Number(t.sellQty || 0);
+      const price = Number(t.price || 0);
       item.buyQty += bQ;
       item.sellQty += sQ;
       if (bQ > 0) {
-        item.buyAmount += bQ * Number(t.price || 0);
+        item.buyAmount += bQ * price;
+      }
+      if (sQ > 0) {
+        item.sellAmount += sQ * price;
       }
     });
 
@@ -624,7 +628,7 @@ export default function App() {
 
     for (const key of allKeys) {
       const prevItem = holdingMap.get(key) || { qty: 0, totalCost: 0 };
-      const todayItem = todayTxMap.get(key) || { buyQty: 0, sellQty: 0, buyAmount: 0 };
+      const todayItem = todayTxMap.get(key) || { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 };
       
       const [bank, purpose, name, code, currency] = key.split('|');
       
@@ -655,7 +659,10 @@ export default function App() {
       const currentAmount = qty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
       
-      const todaySellProfitLoss = sellQty > 0 ? (currentPrice - avgPrice) * sellQty : 0;
+      // 실제 매도 단가(매도가격)를 기반으로 매매손익 계산 ((매도가격 - 평균단가) * 매도수량)
+      const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
+      const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
+      
       const prevPfItem = portfolios.find(p => !p.isManual && p.baseDate === prevDateStr && p.bank === bank && p.purpose === purpose && p.code === code);
       const prevSellProfitLoss = prevPfItem ? Number(prevPfItem.sellProfitLoss || 0) : 0;
       const sellProfitLoss = prevSellProfitLoss + todaySellProfitLoss;
