@@ -547,6 +547,34 @@ export default function App() {
       const textData = await res.text();
       const sheetData = JSON.parse(textData);
       
+      // 엑셀 첫번째 시트 B1 셀의 일자 추출
+      let rawB1Date = '';
+      if (sheetData.b1Date) {
+        rawB1Date = sheetData.b1Date;
+      } else if (sheetData.date) {
+        rawB1Date = sheetData.date;
+      } else if (Array.isArray(sheetData) && sheetData.length > 0) {
+        if (Array.isArray(sheetData[0])) {
+          rawB1Date = sheetData[0][1];
+        } else if (typeof sheetData[0] === 'object') {
+          const firstRow = sheetData[0];
+          const keys = Object.keys(firstRow);
+          if (keys.length > 1) {
+            rawB1Date = firstRow[keys[1]];
+          } else {
+            rawB1Date = firstRow[keys[0]];
+          }
+        }
+      }
+
+      const excelDate = parseExcelDate(rawB1Date);
+
+      // 구글 시트 B1 셀의 일자와 기준일자 비교
+      if (excelDate !== baseDate) {
+        showError(`구글 시트의 일자(${excelDate})와 기준 일자(${baseDate})가 다릅니다.`);
+        return;
+      }
+
       let targetArray = Array.isArray(sheetData) ? sheetData : (sheetData.data || Object.values(sheetData).find(Array.isArray) || []);
       
       targetArray.forEach(item => {
@@ -762,7 +790,6 @@ export default function App() {
 
   const handleAddTransactionRow = () => {
     const newId = 'temp_tx_' + Date.now();
-    // 현재 적용된 조회 기간 내의 날짜로 자동 설정 (조회 필터 설정 시 화면에서 사라지는 문제 방지)
     const initialDate = appliedTxEndDate || appliedTxStartDate || getTodayString();
 
     setTransactions(prev => [{
@@ -1088,13 +1115,11 @@ export default function App() {
       if (t.id === id) {
         const updated = { ...t, [field]: val };
         
-        // 은행, 목적, 종목명 중 하나가 변경될 때 종목코드 매칭 로직 처리
         if (field === 'bank' || field === 'purpose' || field === 'name') {
           const targetBank = (field === 'bank' ? val : updated.bank || '').trim();
           const targetPurpose = (field === 'purpose' ? val : updated.purpose || '').trim();
           const targetName = (field === 'name' ? val : updated.name || '').trim();
 
-          // 은행, 목적 변경 시 기존 종목명이 해당 조합에 없으면 종목명 및 코드 초기화
           if (field === 'bank' || field === 'purpose') {
             const hasMatchingName = stocks.some(s => 
               (s.bank || '').trim() === targetBank && 
@@ -1107,7 +1132,6 @@ export default function App() {
             }
           }
 
-          // 은행, 목적, 종목명이 모두 맞춰진 경우 해당 종목의 code 및 currency 자동 세팅
           if (targetBank && targetPurpose && targetName) {
             const matched = stocks.find(s => 
               (s.bank || '').trim() === targetBank &&
@@ -1287,7 +1311,6 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex justify-between items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                {/* 조회 조건 1차 정렬 필드 */}
                 <select 
                   value={stockSortPrimary} 
                   onChange={e => setStockSortPrimary(e.target.value)}
@@ -1300,7 +1323,6 @@ export default function App() {
                   <option value="category">종목 유형</option>
                 </select>
 
-                {/* 조회 조건 2차 정렬 필드 */}
                 <select 
                   value={stockSortSecondary} 
                   onChange={e => setStockSortSecondary(e.target.value)}
@@ -1334,7 +1356,6 @@ export default function App() {
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={stocks.length > 0 && selectedStockIds.length === stocks.length} onChange={e => setSelectedStockIds(e.target.checked ? stocks.map(s => s.id) : [])} /></th>
-                    {/* Current Record Indicator 헤더 */}
                     <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">은행</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-44">목적</th>
@@ -1359,7 +1380,6 @@ export default function App() {
                       >
                         <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
                         
-                        {/* Current Record Indicator 필드 */}
                         <td className="py-3 px-2 text-center">
                           <div className="flex items-center justify-center gap-1">
                             {isActive ? (
@@ -1370,7 +1390,6 @@ export default function App() {
                           </div>
                         </td>
 
-                        {/* 은행 필드 */}
                         <td className="py-2 px-4">
                           {isCustomBank ? (
                             <div className="flex items-center gap-1">
@@ -1412,7 +1431,6 @@ export default function App() {
                           )}
                         </td>
 
-                        {/* 목적 필드 */}
                         <td className="py-2 px-4">
                           {isCustomPurpose ? (
                             <div className="flex items-center gap-1">
@@ -1492,7 +1510,6 @@ export default function App() {
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredTransactions.length > 0 && selectedTransactionIds.length === filteredTransactions.length} onChange={e => setSelectedTransactionIds(e.target.checked ? filteredTransactions.map(t => t.id) : [])} /></th>
-                    {/* Current Record Indicator 헤더 */}
                     <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-40">거래일자</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">은행</th>
@@ -1518,7 +1535,6 @@ export default function App() {
                       >
                         <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedTransactionIds.includes(tx.id)} onChange={() => setSelectedTransactionIds(prev => prev.includes(tx.id) ? prev.filter(i => i !== tx.id) : [...prev, tx.id])} /></td>
                         
-                        {/* Current Record Indicator 필드 */}
                         <td className="py-3 px-2 text-center">
                           <div className="flex items-center justify-center gap-1">
                             {isActive ? (
