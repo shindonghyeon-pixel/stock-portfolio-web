@@ -116,6 +116,9 @@ export default function App() {
   const [isSavingStocks, setIsSavingStocks] = useState(false);
   const [selectedStockIds, setSelectedStockIds] = useState([]);
   const [deletedStockIds, setDeletedStockIds] = useState([]);
+  // 종목 관리 직접 입력 모드 상태
+  const [customStockBankRows, setCustomStockBankRows] = useState({});
+  const [customStockPurposeRows, setCustomStockPurposeRows] = useState({});
 
   // 3. 거래현황 상태
   const [transactions, setTransactions] = useState([]);
@@ -166,6 +169,19 @@ export default function App() {
   // ==================== [useMemo 정의를 최상단으로 이동] ====================
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
   const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+
+  // 종목 관리 전용 동적 은행/목적 드롭다운 옵션 목록 (기본 추천 목록 + DB 및 엑셀 데이터 연동)
+  const stockBankOptions = useMemo(() => {
+    const defaultList = ['미래에셋', 'KB증권', '삼성증권'];
+    const currentList = stocks.map(s => s.bank?.trim()).filter(Boolean);
+    return Array.from(new Set([...defaultList, ...currentList])).sort((a, b) => a.localeCompare(b, 'ko'));
+  }, [stocks]);
+
+  const stockPurposeOptions = useMemo(() => {
+    const defaultList = ['연금', 'IRP', 'DC', '기타'];
+    const currentList = stocks.map(s => s.purpose?.trim()).filter(Boolean);
+    return Array.from(new Set([...defaultList, ...currentList])).sort((a, b) => a.localeCompare(b, 'ko'));
+  }, [stocks]);
 
   const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   
@@ -1238,18 +1254,102 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredStocks.length > 0 ? filteredStocks.map(stock => (
-                    <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
-                      <td className="py-2 px-4"><select value={stock.bank || ''} onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="">은행 선택</option><option value="미래에셋">미래에셋</option><option value="KB증권">KB증권</option><option value="삼성증권">삼성증권</option></select></td>
-                      <td className="py-2 px-4"><select value={stock.purpose || '연금'} onChange={e => handleStockRowChange(stock.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
-                      <td className="py-2 px-4"><input type="text" value={stock.code || ''} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                      <td className="py-2 px-4"><input type="text" value={stock.name || ''} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                      <td className="py-2 px-4"><input type="text" value={stock.category || ''} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                      <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
-                      <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
-                    </tr>
-                  )) : <tr><td colSpan="8" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
+                  {filteredStocks.length > 0 ? filteredStocks.map(stock => {
+                    const isCustomBank = customStockBankRows[stock.id] || (stock.bank && !stockBankOptions.includes(stock.bank));
+                    const isCustomPurpose = customStockPurposeRows[stock.id] || (stock.purpose && !stockPurposeOptions.includes(stock.purpose));
+
+                    return (
+                      <tr key={stock.id} className={`hover:bg-slate-50 ${selectedStockIds.includes(stock.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedStockIds.includes(stock.id)} onChange={() => setSelectedStockIds(prev => prev.includes(stock.id) ? prev.filter(i => i !== stock.id) : [...prev, stock.id])} /></td>
+                        
+                        {/* 은행 필드 (자동 옵션 생성 + 직접 입력 전환) */}
+                        <td className="py-2 px-4">
+                          {isCustomBank ? (
+                            <div className="flex items-center gap-1">
+                              <input 
+                                type="text" 
+                                value={stock.bank || ''} 
+                                onChange={e => handleStockRowChange(stock.id, 'bank', e.target.value)} 
+                                placeholder="은행 입력" 
+                                className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" 
+                              />
+                              <button 
+                                onClick={() => setCustomStockBankRows(prev => ({ ...prev, [stock.id]: false }))} 
+                                title="목록에서 선택"
+                                className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <select 
+                              value={stock.bank || ''} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === '__custom__') {
+                                  setCustomStockBankRows(prev => ({ ...prev, [stock.id]: true }));
+                                  handleStockRowChange(stock.id, 'bank', '');
+                                } else {
+                                  handleStockRowChange(stock.id, 'bank', val);
+                                }
+                              }} 
+                              className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"
+                            >
+                              <option value="">은행 선택</option>
+                              {stockBankOptions.map(b => <option key={b} value={b}>{b}</option>)}
+                              <option value="__custom__">+ 직접 입력</option>
+                            </select>
+                          )}
+                        </td>
+
+                        {/* 목적 필드 (자동 옵션 생성 + 직접 입력 전환) */}
+                        <td className="py-2 px-4">
+                          {isCustomPurpose ? (
+                            <div className="flex items-center gap-1">
+                              <input 
+                                type="text" 
+                                value={stock.purpose || ''} 
+                                onChange={e => handleStockRowChange(stock.id, 'purpose', e.target.value)} 
+                                placeholder="목적 입력" 
+                                className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" 
+                              />
+                              <button 
+                                onClick={() => setCustomStockPurposeRows(prev => ({ ...prev, [stock.id]: false }))} 
+                                title="목록에서 선택"
+                                className="p-1 text-slate-400 hover:text-slate-600 rounded"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <select 
+                              value={stock.purpose || ''} 
+                              onChange={e => {
+                                const val = e.target.value;
+                                if (val === '__custom__') {
+                                  setCustomStockPurposeRows(prev => ({ ...prev, [stock.id]: true }));
+                                  handleStockRowChange(stock.id, 'purpose', '');
+                                } else {
+                                  handleStockRowChange(stock.id, 'purpose', val);
+                                }
+                              }} 
+                              className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"
+                            >
+                              <option value="">목적 선택</option>
+                              {stockPurposeOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                              <option value="__custom__">+ 직접 입력</option>
+                            </select>
+                          )}
+                        </td>
+
+                        <td className="py-2 px-4"><input type="text" value={stock.code || ''} onChange={e => handleStockRowChange(stock.id, 'code', e.target.value)} placeholder="종목코드" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><input type="text" value={stock.name || ''} onChange={e => handleStockRowChange(stock.id, 'name', e.target.value)} placeholder="종목명" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><input type="text" value={stock.category || ''} onChange={e => handleStockRowChange(stock.id, 'category', e.target.value)} placeholder="종목 유형" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4 text-right"><input type="number" value={stock.ratio || 0} onChange={e => handleStockRowChange(stock.id, 'ratio', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-right bg-white" /></td>
+                        <td className="py-2 px-4 text-center"><input type="text" value={stock.currency || 'KRW'} onChange={e => handleStockRowChange(stock.id, 'currency', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm text-center bg-white font-medium" /></td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="8" className="py-16 text-center text-slate-500">등록된 종목 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
