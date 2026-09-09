@@ -56,23 +56,6 @@ const formatCurrency = (amount, currency = 'KRW') => {
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
   
-  if (typeof val === 'string') {
-    let clean = val.trim();
-    
-    // "YYYY-MM-DD" 또는 "YYYY/MM/DD" 또는 "YYYY.MM.DD" 형태 추출
-    const match = clean.match(/(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})/);
-    if (match) {
-      const y = match[1];
-      const m = String(match[2]).padStart(2, '0');
-      const d = String(match[3]).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-
-    if (/^\d{5}$/.test(clean)) {
-      val = parseInt(clean, 10);
-    }
-  }
-
   if (typeof val === 'number') {
     const utcDays = Math.floor(val - 25569);
     const utcValue = utcDays * 86400;
@@ -86,15 +69,32 @@ const parseExcelDate = (val) => {
   }
 
   if (typeof val === 'string') {
-    const parsed = new Date(val);
+    let clean = val.trim();
+    if (/^\d{5}$/.test(clean)) {
+      const numVal = parseInt(clean, 10);
+      const utcDays = Math.floor(numVal - 25569);
+      const dateInfo = new Date(utcDays * 86400 * 1000);
+      const y = dateInfo.getUTCFullYear();
+      const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(dateInfo.getUTCDate()).padStart(2, '0');
+      if (!isNaN(y)) return `${y}-${m}-${d}`;
+    }
+
+    let normalized = clean.replace(/[\.\/]/g, '-');
+    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
+      const parts = normalized.split('-');
+      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+    }
+    
+    const parsed = new Date(clean);
     if (!isNaN(parsed.getTime())) {
       const y = parsed.getFullYear();
       const m = String(parsed.getMonth() + 1).padStart(2, '0');
       const d = String(parsed.getDate()).padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
+    return clean; 
   }
-
   return getTodayString();
 };
 
