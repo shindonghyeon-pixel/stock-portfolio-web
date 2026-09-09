@@ -56,11 +56,9 @@ const formatCurrency = (amount, currency = 'KRW') => {
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
 
-  // 1. ISO Date 형태 또는 Date 객체/문자열 처리 (타임존 오차 보정 - KST UTC+9 적용)
   if (typeof val === 'string' && (val.includes('T') || val.includes('Z'))) {
     const parsedDate = new Date(val);
     if (!isNaN(parsedDate.getTime())) {
-      // 한국 시각(KST)으로 변환 후 연, 월, 일 추출
       const kstDate = new Date(parsedDate.getTime() + (9 * 60 * 60 * 1000));
       const y = kstDate.getUTCFullYear();
       const m = String(kstDate.getUTCMonth() + 1).padStart(2, '0');
@@ -69,7 +67,6 @@ const parseExcelDate = (val) => {
     }
   }
 
-  // 2. 일반 문자열 정규식 파싱 ("YYYY-MM-DD", "YYYY/MM/DD", "YYYY.MM.DD")
   if (typeof val === 'string') {
     let clean = val.trim();
     const match = clean.match(/(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})/);
@@ -85,7 +82,6 @@ const parseExcelDate = (val) => {
     }
   }
 
-  // 3. Excel 시리얼 숫자 처리
   if (typeof val === 'number') {
     const utcDays = Math.floor(val - 25569);
     const utcValue = utcDays * 86400;
@@ -98,7 +94,6 @@ const parseExcelDate = (val) => {
     }
   }
 
-  // 4. 기타 Date 문자열 파싱
   if (typeof val === 'string') {
     const parsed = new Date(val);
     if (!isNaN(parsed.getTime())) {
@@ -139,7 +134,7 @@ export default function App() {
   const [stockSortSecondary, setStockSortSecondary] = useState('purpose');
   const [appliedStockSortPrimary, setAppliedStockSortPrimary] = useState('bank');
   const [appliedStockSortSecondary, setAppliedStockSortSecondary] = useState('purpose');
-  // 종목 관리 현재 포커스 레코드 ID (Current Record Indicator)
+  // 종목 관리 현재 포커스 레코드 ID
   const [activeStockId, setActiveStockId] = useState(null);
 
   // 3. 거래현황 상태
@@ -152,7 +147,7 @@ export default function App() {
   const [txEndDate, setTxEndDate] = useState(getTodayString());
   const [appliedTxStartDate, setAppliedTxStartDate] = useState('');
   const [appliedTxEndDate, setAppliedTxEndDate] = useState('');
-  // 거래현황 현재 포커스 레코드 ID (Current Record Indicator)
+  // 거래현황 현재 포커스 레코드 ID
   const [activeTransactionId, setActiveTransactionId] = useState(null);
 
   // 4. 포트폴리오 현황 상태
@@ -282,18 +277,15 @@ export default function App() {
     return trendTotalPayment * (1 + rate);
   }, [trendTotalPayment, trendProfitRateInput]);
 
-  // 포트폴리오 데이터를 동적으로 합성하여 총액 Trend 목록 생성
   const sortedTrendRows = useMemo(() => {
     const combinedMap = new Map();
 
-    // 1) 기존 trendRows 추가
     trendRows.forEach(tr => {
       if (tr.date) {
         combinedMap.set(tr.date, { id: tr.id, date: tr.date, amount: Number(tr.amount || 0) });
       }
     });
 
-    // 2) portfolios의 baseDate별 총액을 계산하여 병합 (포트폴리오가 존재할 경우 우선 적용)
     const pfDateGroups = {};
     portfolios.forEach(pf => {
       if (pf.baseDate) {
@@ -549,6 +541,7 @@ export default function App() {
     }
   };
 
+  // 포트폴리오 계산 (일자 비교 로직 제거됨)
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     
@@ -560,36 +553,6 @@ export default function App() {
       
       const textData = await res.text();
       const sheetData = JSON.parse(textData);
-      
-      // 구글 시트 B1 셀 (첫번째 행의 두번째 열, B열) 날짜 추출
-      let rawB1Date = '';
-      if (sheetData.b1Date) {
-        rawB1Date = sheetData.b1Date;
-      } else if (sheetData.date) {
-        rawB1Date = sheetData.date;
-      } else if (Array.isArray(sheetData) && sheetData.length > 0) {
-        const firstRow = sheetData[0];
-        if (Array.isArray(firstRow)) {
-          // 배열 구조일 경우 A=0, B=1 위치
-          rawB1Date = firstRow[1] !== undefined ? firstRow[1] : firstRow[0];
-        } else if (typeof firstRow === 'object') {
-          // 객체 구조일 경우 키/값 매핑 확인
-          const keys = Object.keys(firstRow);
-          if (keys.length > 1) {
-            rawB1Date = firstRow[keys[1]];
-          } else {
-            rawB1Date = firstRow[keys[0]];
-          }
-        }
-      }
-
-      const excelDate = parseExcelDate(rawB1Date);
-
-      // 구글 시트 B1 셀의 일자와 기준일자 비교
-      if (excelDate !== baseDate) {
-        showError(`구글 시트의 일자(${excelDate})와 기준 일자(${baseDate})가 다릅니다.`);
-        return;
-      }
 
       let targetArray = Array.isArray(sheetData) ? sheetData : (sheetData.data || Object.values(sheetData).find(Array.isArray) || []);
       
