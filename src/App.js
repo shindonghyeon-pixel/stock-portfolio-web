@@ -221,7 +221,7 @@ export default function App() {
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
       if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(a.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
@@ -268,13 +268,45 @@ export default function App() {
     return trendTotalPayment * (1 + rate);
   }, [trendTotalPayment, trendProfitRateInput]);
 
+  // 포트폴리오 데이터를 동적으로 합성하여 총액 Trend 목록 생성
   const sortedTrendRows = useMemo(() => {
-    const filtered = trendRows.filter(tr => {
+    const combinedMap = new Map();
+
+    // 1) 기존 trendRows 추가
+    trendRows.forEach(tr => {
+      if (tr.date) {
+        combinedMap.set(tr.date, { id: tr.id, date: tr.date, amount: Number(tr.amount || 0) });
+      }
+    });
+
+    // 2) portfolios의 baseDate별 총액을 계산하여 병합 (포트폴리오가 존재할 경우 우선 적용)
+    const pfDateGroups = {};
+    portfolios.forEach(pf => {
+      if (pf.baseDate) {
+        if (!pfDateGroups[pf.baseDate]) pfDateGroups[pf.baseDate] = 0;
+        const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
+        const mult = isUSD ? exchangeRate : 1;
+        pfDateGroups[pf.baseDate] += Number(pf.currentAmount || 0) * mult;
+      }
+    });
+
+    Object.keys(pfDateGroups).forEach(dateStr => {
+      combinedMap.set(dateStr, {
+        id: 'pf_summary_' + dateStr,
+        date: dateStr,
+        amount: pfDateGroups[dateStr]
+      });
+    });
+
+    const allCombined = Array.from(combinedMap.values());
+
+    const filtered = allCombined.filter(tr => {
       if (!appliedTrendStartDate || !appliedTrendEndDate) return true;
       return tr.date && tr.date >= appliedTrendStartDate && tr.date <= appliedTrendEndDate;
     });
-    return [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  }, [trendRows, appliedTrendStartDate, appliedTrendEndDate]);
+
+    return filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [trendRows, portfolios, appliedTrendStartDate, appliedTrendEndDate, exchangeRate]);
 
   useEffect(() => {
     if (document.getElementById('tailwind-cdn')) {
@@ -713,7 +745,6 @@ export default function App() {
     }, ...prev]);
   };
 
-  // 종목 추가 버튼 클릭 시 항상 첫 번째(최상단) 위치에 빈 레코드 생성 및 커서 이동
   const handleAddStockRow = () => {
     const newId = 'temp_stock_' + Date.now();
     setStocks(prev => [{
@@ -729,7 +760,6 @@ export default function App() {
     setActiveStockId(newId);
   };
 
-  // 거래현황 추가 버튼 클릭 시 항상 첫 번째(최상단) 위치에 빈 레코드 생성 및 커서 이동
   const handleAddTransactionRow = () => {
     const newId = 'temp_tx_' + Date.now();
     setTransactions(prev => [{
