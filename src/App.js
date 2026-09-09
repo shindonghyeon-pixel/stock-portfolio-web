@@ -55,7 +55,37 @@ const formatCurrency = (amount, currency = 'KRW') => {
 
 const parseExcelDate = (val) => {
   if (val === undefined || val === null || val === '') return getTodayString();
-  
+
+  // 1. ISO Date 형태 또는 Date 객체/문자열 처리 (타임존 오차 보정 - KST UTC+9 적용)
+  if (typeof val === 'string' && (val.includes('T') || val.includes('Z'))) {
+    const parsedDate = new Date(val);
+    if (!isNaN(parsedDate.getTime())) {
+      // 한국 시각(KST)으로 변환 후 연, 월, 일 추출
+      const kstDate = new Date(parsedDate.getTime() + (9 * 60 * 60 * 1000));
+      const y = kstDate.getUTCFullYear();
+      const m = String(kstDate.getUTCMonth() + 1).padStart(2, '0');
+      const d = String(kstDate.getUTCDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+
+  // 2. 일반 문자열 정규식 파싱 ("YYYY-MM-DD", "YYYY/MM/DD", "YYYY.MM.DD")
+  if (typeof val === 'string') {
+    let clean = val.trim();
+    const match = clean.match(/(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})/);
+    if (match) {
+      const y = match[1];
+      const m = String(match[2]).padStart(2, '0');
+      const d = String(match[3]).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
+    if (/^\d{5}$/.test(clean)) {
+      val = parseInt(clean, 10);
+    }
+  }
+
+  // 3. Excel 시리얼 숫자 처리
   if (typeof val === 'number') {
     const utcDays = Math.floor(val - 25569);
     const utcValue = utcDays * 86400;
@@ -68,33 +98,17 @@ const parseExcelDate = (val) => {
     }
   }
 
+  // 4. 기타 Date 문자열 파싱
   if (typeof val === 'string') {
-    let clean = val.trim();
-    if (/^\d{5}$/.test(clean)) {
-      const numVal = parseInt(clean, 10);
-      const utcDays = Math.floor(numVal - 25569);
-      const dateInfo = new Date(utcDays * 86400 * 1000);
-      const y = dateInfo.getUTCFullYear();
-      const m = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
-      const d = String(dateInfo.getUTCDate()).padStart(2, '0');
-      if (!isNaN(y)) return `${y}-${m}-${d}`;
-    }
-
-    let normalized = clean.replace(/[\.\/]/g, '-');
-    if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) {
-      const parts = normalized.split('-');
-      return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
-    }
-    
-    const parsed = new Date(clean);
+    const parsed = new Date(val);
     if (!isNaN(parsed.getTime())) {
       const y = parsed.getFullYear();
       const m = String(parsed.getMonth() + 1).padStart(2, '0');
       const d = String(parsed.getDate()).padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
-    return clean; 
   }
+
   return getTodayString();
 };
 
@@ -547,17 +561,19 @@ export default function App() {
       const textData = await res.text();
       const sheetData = JSON.parse(textData);
       
-      // 엑셀 첫번째 시트 B1 셀의 일자 추출
+      // 구글 시트 B1 셀 (첫번째 행의 두번째 열, B열) 날짜 추출
       let rawB1Date = '';
       if (sheetData.b1Date) {
         rawB1Date = sheetData.b1Date;
       } else if (sheetData.date) {
         rawB1Date = sheetData.date;
       } else if (Array.isArray(sheetData) && sheetData.length > 0) {
-        if (Array.isArray(sheetData[0])) {
-          rawB1Date = sheetData[0][1];
-        } else if (typeof sheetData[0] === 'object') {
-          const firstRow = sheetData[0];
+        const firstRow = sheetData[0];
+        if (Array.isArray(firstRow)) {
+          // 배열 구조일 경우 A=0, B=1 위치
+          rawB1Date = firstRow[1] !== undefined ? firstRow[1] : firstRow[0];
+        } else if (typeof firstRow === 'object') {
+          // 객체 구조일 경우 키/값 매핑 확인
           const keys = Object.keys(firstRow);
           if (keys.length > 1) {
             rawB1Date = firstRow[keys[1]];
