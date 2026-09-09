@@ -1087,24 +1087,48 @@ export default function App() {
     setTransactions(prev => prev.map(t => {
       if (t.id === id) {
         const updated = { ...t, [field]: val };
-        if (field === 'bank' || field === 'purpose' || field === 'name' || field === 'code') {
-          const matched = stocks.find(s => 
-            (s.bank || '').trim() === (field === 'bank' ? val : updated.bank).trim() &&
-            (s.purpose || '').trim() === (field === 'purpose' ? val : updated.purpose).trim() &&
-            ((field === 'name' ? val : updated.name) ? (s.name || '').trim() === (field === 'name' ? val : updated.name).trim() : true) &&
-            ((field === 'code' ? val : updated.code) ? (s.code || '').trim() === (field === 'code' ? val : updated.code).trim() : true)
-          );
-          if (matched) {
-            updated.code = matched.code || updated.code;
-            updated.name = matched.name || updated.name;
-            updated.currency = matched.currency || 'KRW';
-          } else if (field === 'code') {
-            const cUpper = (val || '').trim().toUpperCase();
-            if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
-              updated.currency = 'USD';
-            } else if (/^\d{6}$/.test(cUpper)) {
-              updated.currency = 'KRW';
+        
+        // 은행, 목적, 종목명 중 하나가 변경될 때 종목코드 매칭 로직 처리
+        if (field === 'bank' || field === 'purpose' || field === 'name') {
+          const targetBank = (field === 'bank' ? val : updated.bank || '').trim();
+          const targetPurpose = (field === 'purpose' ? val : updated.purpose || '').trim();
+          const targetName = (field === 'name' ? val : updated.name || '').trim();
+
+          // 은행, 목적 변경 시 기존 종목명이 해당 조합에 없으면 종목명 및 코드 초기화
+          if (field === 'bank' || field === 'purpose') {
+            const hasMatchingName = stocks.some(s => 
+              (s.bank || '').trim() === targetBank && 
+              (s.purpose || '').trim() === targetPurpose && 
+              (s.name || '').trim() === targetName
+            );
+            if (!hasMatchingName) {
+              updated.name = '';
+              updated.code = '';
             }
+          }
+
+          // 은행, 목적, 종목명이 모두 맞춰진 경우 해당 종목의 code 및 currency 자동 세팅
+          if (targetBank && targetPurpose && targetName) {
+            const matched = stocks.find(s => 
+              (s.bank || '').trim() === targetBank &&
+              (s.purpose || '').trim() === targetPurpose &&
+              (s.name || '').trim() === targetName
+            );
+            if (matched) {
+              updated.code = matched.code || '';
+              updated.currency = matched.currency || 'KRW';
+            } else {
+              updated.code = '';
+            }
+          } else {
+            updated.code = '';
+          }
+        } else if (field === 'code') {
+          const cUpper = (val || '').trim().toUpperCase();
+          if (/^[A-Z]+$/.test(cUpper) && cUpper.length <= 5) {
+            updated.currency = 'USD';
+          } else if (/^\d{6}$/.test(cUpper)) {
+            updated.currency = 'KRW';
           }
         }
         return updated;
