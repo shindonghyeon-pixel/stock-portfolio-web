@@ -683,38 +683,48 @@ export default function App() {
       });
     }
 
-    // 2. 전일자에 수동으로 입력한 데이터를 그대로 가지고 옴
+    // 전일자의 수동 입력 데이터 확인
     const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
-    prevManualItems.forEach(manual => {
-      const currentAmount = Number(manual.currentAmount || 0);
-      const purchaseAmount = Number(manual.purchaseAmount || 0);
-      const evalProfitLoss = currentAmount - purchaseAmount;
 
-      newPfList.push({
-        ...manual,
-        id: 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
-        baseDate: baseDate,
-        purchaseAmount: purchaseAmount,
-        currentAmount: currentAmount,
-        evalProfitLoss: evalProfitLoss
+    if (prevManualItems.length > 0) {
+      // 1. 전일자에 수동 데이터가 존재하는 경우: 해당 데이터를 그대로 가지고 와서 새 기준일자용으로 복사 추가
+      prevManualItems.forEach(manual => {
+        const currentAmount = Number(manual.currentAmount || 0);
+        const purchaseAmount = Number(manual.purchaseAmount || 0);
+        const evalProfitLoss = currentAmount - purchaseAmount;
+
+        newPfList.push({
+          ...manual,
+          id: 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+          baseDate: baseDate,
+          purchaseAmount: purchaseAmount,
+          currentAmount: currentAmount,
+          evalProfitLoss: evalProfitLoss
+        });
       });
-    });
 
-    // 1. 해당 기준일자 데이터만 삭제(교체)하고 다른 날짜의 데이터는 그대로 유지
-    setPortfolios(prev => [
-      ...prev.filter(p => p.baseDate !== baseDate),
-      ...newPfList
-    ]);
+      // 기준일자의 기존 데이터(자동+수동 전체) 삭제 후 새로 만든 newPfList로 교체
+      setPortfolios(prev => [
+        ...prev.filter(p => p.baseDate !== baseDate),
+        ...newPfList
+      ]);
+    } else {
+      // 2. 전일자에 수동 데이터가 없는 경우: 기존 기준일자(baseDate)의 수동 데이터는 삭제하지 않고 유지
+      setPortfolios(prev => [
+        ...prev.filter(p => !(p.baseDate === baseDate && !p.isManual)), // 기준일자의 자동계산 데이터만 삭제
+        ...newPfList // 새로 계산된 자동 항목 추가 (기존 수동 데이터는 유지됨)
+      ]);
+    }
 
     setSuccessMessage('포트폴리오 계산이 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // 포트폴리오 계산 버튼 핸들러 (1번 조건 및 2번 조건 적용)
+  // 포트폴리오 계산 버튼 핸들러
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
 
-    // 1. 기준일자에 해당하는 레코드가 존재하는지 확인
+    // 기준일자에 해당하는 레코드가 존재하는지 확인
     const hasExistingData = portfolios.some(p => p.baseDate === baseDate);
 
     if (hasExistingData) {
