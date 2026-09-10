@@ -127,15 +127,12 @@ export default function App() {
   const [isSavingStocks, setIsSavingStocks] = useState(false);
   const [selectedStockIds, setSelectedStockIds] = useState([]);
   const [deletedStockIds, setDeletedStockIds] = useState([]);
-  // 종목 관리 직접 입력 모드 상태
   const [customStockBankRows, setCustomStockBankRows] = useState({});
   const [customStockPurposeRows, setCustomStockPurposeRows] = useState({});
-  // 종목 관리 정렬/조회 필드 상태
   const [stockSortPrimary, setStockSortPrimary] = useState('bank');
   const [stockSortSecondary, setStockSortSecondary] = useState('purpose');
   const [appliedStockSortPrimary, setAppliedStockSortPrimary] = useState('bank');
   const [appliedStockSortSecondary, setAppliedStockSortSecondary] = useState('purpose');
-  // 종목 관리 현재 포커스 레코드 ID
   const [activeStockId, setActiveStockId] = useState(null);
 
   // 3. 거래현황 상태
@@ -148,7 +145,6 @@ export default function App() {
   const [txEndDate, setTxEndDate] = useState(getTodayString());
   const [appliedTxStartDate, setAppliedTxStartDate] = useState('');
   const [appliedTxEndDate, setAppliedTxEndDate] = useState('');
-  // 거래현황 현재 포커스 레코드 ID
   const [activeTransactionId, setActiveTransactionId] = useState(null);
 
   // 4. 포트폴리오 현황 상태
@@ -187,7 +183,6 @@ export default function App() {
   const chartCanvasRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
-  // ==================== [useMemo 정의] ====================
   const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
   const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
 
@@ -208,17 +203,11 @@ export default function App() {
   const filteredStocks = useMemo(() => {
     return [...stocks].sort((a, b) => {
       const getVal = (item, fieldKey) => (item[fieldKey] || '').toString().trim();
-      
       const val1A = getVal(a, appliedStockSortPrimary);
       const val1B = getVal(b, appliedStockSortPrimary);
-      
-      if (val1A !== val1B) {
-        return val1A.localeCompare(val1B, 'ko');
-      }
-      
+      if (val1A !== val1B) return val1A.localeCompare(val1B, 'ko');
       const val2A = getVal(a, appliedStockSortSecondary);
       const val2B = getVal(b, appliedStockSortSecondary);
-      
       return val2A.localeCompare(val2B, 'ko');
     });
   }, [stocks, appliedStockSortPrimary, appliedStockSortSecondary]);
@@ -231,8 +220,8 @@ export default function App() {
       return true;
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(a.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
@@ -544,7 +533,9 @@ export default function App() {
   };
 
   // =========================================================================
-  // [수정 완료] 포트폴리오 실질 계산 수행 함수 (요청 1, 2, 3번 반영)
+  // [요청 공식 반영] 포트폴리오 실질 계산 수행 함수
+  // 1. 매입금액 = 오늘 거래현황 sum(단가 * 수량)
+  // 2. 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
   // =========================================================================
   const executePortfolioCalculation = async (baseDate) => {
     let externalPriceMap = new Map();
@@ -585,15 +576,15 @@ export default function App() {
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    // 어제자 포트폴리오 잔고 데이터 수집
+    // 어제자 포트폴리오 잔고 수집
     const prevDayPortfolios = portfolios.filter(p => p.baseDate === prevDateStr);
     const holdingMap = new Map();
 
     prevDayPortfolios.forEach(p => {
       const key = `${p.bank}|${p.purpose}|${p.name}|${p.code}|${p.currency || 'KRW'}`;
       holdingMap.set(key, {
-        qty: Number(p.qty || 0),
-        avgPrice: Number(p.avgPrice || 0),
+        qty: Number(p.qty || 0),               // 어제자 수량
+        avgPrice: Number(p.avgPrice || 0),     // 어제자 평균단가
         bank: p.bank,
         purpose: p.purpose,
         name: p.name,
@@ -603,11 +594,10 @@ export default function App() {
       });
     });
 
-    // 1번 로직 반영: 기준일자와 거래일자가 같은(tx.date === baseDate) 당일 거래 내역만 필터링
+    // 오늘(baseDate) 거래현황 집계
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
     const todayTxMap = new Map();
 
-    // 2번 로직 반영: 은행, 목적, 종목별로 매수수량이 0보다 큰 경우에만 매입금액 SUM(단가 * 매수수량)
     todayTxs.forEach(t => {
       const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency || 'KRW'}`;
       if (!todayTxMap.has(key)) {
@@ -621,12 +611,12 @@ export default function App() {
       item.buyQty += bQ;
       item.sellQty += sQ;
 
-      // 매수수량이 0보다 큰 경우에만 매입금액 SUM
+      // 1. 매입금액 = 오늘 거래현황 sum(단가 * 매수수량)
       if (bQ > 0) {
-        item.buyAmount += bQ * price;
+        item.buyAmount += (bQ * price);
       }
       if (sQ > 0) {
-        item.sellAmount += sQ * price;
+        item.sellAmount += (sQ * price);
       }
     });
 
@@ -639,13 +629,22 @@ export default function App() {
       
       const [bank, purpose, name, code, currency] = key.split('|');
       
-      const prevQty = prevItem.qty;             // 어제자 수량
-      const buyQty = todayItem.buyQty;          // 오늘 매수수량
-      const sellQty = todayItem.sellQty;        // 오늘 매도수량
-      const buyAmount = todayItem.buyAmount;    // 오늘 매입금액 SUM(단가 * 매수수량, 매수수량 > 0)
+      const prevQty = prevItem.qty;                 // 어제자 수량
+      const prevAvgPrice = prevItem.avgPrice;       // 어제자 평균단가
+      const prevInventoryAmount = prevQty * prevAvgPrice; // 어제자 재고 금액 (어제자 수량 * 평균단가)
 
-      // 3번 로직 반영: 수량 = 어제자 수량 + 매수수량 - 매도수량
+      const buyQty = todayItem.buyQty;              // 오늘자 매수수량
+      const sellQty = todayItem.sellQty;            // 오늘자 매도수량
+      const todayBuyAmount = todayItem.buyAmount;   // 오늘 거래현황 매입금액 sum(단가 * 수량)
+
+      // 최종 보유 수량 = 어제자 수량 + 오늘자 매수수량 - 오늘자 매도수량
       const finalQty = Math.max(0, prevQty + buyQty - sellQty);
+
+      // 2. 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
+      const totalBuyQtyDenominator = prevQty + buyQty;
+      const avgPrice = totalBuyQtyDenominator > 0 
+        ? Math.round((prevInventoryAmount + todayBuyAmount) / totalBuyQtyDenominator)
+        : prevAvgPrice;
 
       // 현재가 파악
       let currentPrice = 0;
@@ -659,24 +658,19 @@ export default function App() {
         }
       }
 
-      // 3번 로직 반영: 평균단가 = (매입금액 + (어제자 수량 * 현재단가)) / (매수수량 + 어제자 수량)
-      const denominator = buyQty + prevQty;
-      const avgPrice = denominator > 0 
-        ? Math.round((buyAmount + (prevQty * currentPrice)) / denominator)
-        : prevItem.avgPrice;
-
+      // 최종 매입금액 = 수량 * 가중평균단가
       const purchaseAmount = finalQty * avgPrice;
       const currentAmount = finalQty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
       
-      // 매도에 따른 매매손익 계산
+      // 매도 손익
       const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
       const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
       const sellProfitLoss = (prevItem.sellProfitLoss || 0) + todaySellProfitLoss;
 
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
-      // 잔고 수량이 0 이하이고 거래도 없으면 제외
+      // 수량 0 이하, 오늘 매수 없고, 매도손익도 없으면 제외
       if (finalQty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
 
       newPfList.push({
@@ -687,10 +681,10 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,             // 요청 공식으로 산출된 평균단가
+        avgPrice: avgPrice,             // 가중평균단가
         currentPrice: currentPrice,
-        qty: finalQty,                  // 수량 = 어제자 수량 + 매수 - 매도
-        purchaseAmount: purchaseAmount,
+        qty: finalQty,                  // 최종 보유수량
+        purchaseAmount: purchaseAmount, // 최종 매입금액
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
@@ -699,7 +693,7 @@ export default function App() {
       });
     }
 
-    // 전일자의 수동 입력 데이터 확인
+    // 수동 입력 데이터 처리
     const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
 
     if (prevManualItems.length > 0) {
@@ -733,11 +727,8 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // 포트폴리오 계산 버튼 핸들러
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
-
-    // 기준일자에 해당하는 레코드가 존재하는지 확인
     const hasExistingData = portfolios.some(p => p.baseDate === baseDate);
 
     if (hasExistingData) {
@@ -1302,8 +1293,7 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {successMessage && <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg font-medium">{successMessage}</div>}
 
