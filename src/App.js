@@ -630,12 +630,12 @@ export default function App() {
 
       const buyQty = todayItem.buyQty;              // 오늘자 매수수량
       const sellQty = todayItem.sellQty;            // 오늘자 매도수량
-      const todayBuyAmount = todayItem.buyAmount;   // 오늘 거래현황 매입금액 sum(단가 * 수량)
+      const todayBuyAmount = todayItem.buyAmount;   // 오늘 거래현황 당일 매입금액 sum(단가 * 수량)
 
       // 최종 보유 수량 = 어제자 수량 + 오늘자 매수수량 - 오늘자 매도수량
       const finalQty = Math.max(0, prevQty + buyQty - sellQty);
 
-      // 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
+      // 평균단가 = (어제자 재고 금액 + 당일 매입 금액) / (어제자 수량 + 오늘자 매수수량)
       const totalBuyQtyDenominator = prevQty + buyQty;
       const avgPrice = totalBuyQtyDenominator > 0 
         ? Math.round((prevInventoryAmount + todayBuyAmount) / totalBuyQtyDenominator)
@@ -653,17 +653,17 @@ export default function App() {
         }
       }
 
-      // 최종 매입금액 = 수량 * 가중평균단가
-      const purchaseAmount = finalQty * avgPrice;
+      // 보유 원가(누적 원가) 및 현재 금액
+      const totalCost = finalQty * avgPrice;
       const currentAmount = finalQty * currentPrice;
-      const evalProfitLoss = currentAmount - purchaseAmount;
+      const evalProfitLoss = currentAmount - totalCost;
       
       // 매도 손익
       const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
       const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
       const sellProfitLoss = (prevItem.sellProfitLoss || 0) + todaySellProfitLoss;
 
-      const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
+      const profitRate = totalCost > 0 ? evalProfitLoss / totalCost : 0;
 
       // 수량 0 이하, 오늘 매수 없고, 매도손익도 없으면 제외
       if (finalQty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
@@ -676,10 +676,12 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,             // 가중평균단가
+        avgPrice: avgPrice,               // 가중평균단가
         currentPrice: currentPrice,
-        qty: finalQty,                  // 최종 보유수량
-        purchaseAmount: purchaseAmount, // 최종 매입금액
+        qty: finalQty,                    // 최종 보유수량
+        todayBuyAmount: todayBuyAmount,   // 오늘 거래현황 당일 매입금액 (오늘 매수 없으면 0원)
+        purchaseAmount: todayBuyAmount,  // 화면 매입금액 컬럼에 당일 매입금액 매핑
+        totalCost: totalCost,             // 누적 원가
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
@@ -701,6 +703,7 @@ export default function App() {
           ...manual,
           id: 'manual_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
           baseDate: baseDate,
+          todayBuyAmount: purchaseAmount,
           purchaseAmount: purchaseAmount,
           currentAmount: currentAmount,
           evalProfitLoss: evalProfitLoss
@@ -771,6 +774,7 @@ export default function App() {
       avgPrice: 0,
       currentPrice: 0,
       qty: 0,
+      todayBuyAmount: 0,
       purchaseAmount: 0,
       currentAmount: 0,
       evalProfitLoss: 0,
@@ -1087,6 +1091,7 @@ export default function App() {
           avgPrice: pf.avgPrice || 0, 
           currentPrice: pf.currentPrice || 0, 
           qty: pf.qty || 0, 
+          todayBuyAmount: pf.todayBuyAmount || 0,
           purchaseAmount: pf.purchaseAmount || 0, 
           currentAmount: pf.currentAmount || 0, 
           evalProfitLoss: pf.evalProfitLoss || 0, 
@@ -1194,9 +1199,10 @@ export default function App() {
         } else {
           if (field === 'currentPrice') {
             const newCurrentPrice = Number(val || 0);
+            const totalCost = updated.qty * (updated.avgPrice || 0);
             updated.currentAmount = updated.qty * newCurrentPrice;
-            updated.evalProfitLoss = updated.currentAmount - updated.purchaseAmount;
-            updated.profitRate = updated.purchaseAmount > 0 ? updated.evalProfitLoss / updated.purchaseAmount : 0;
+            updated.evalProfitLoss = updated.currentAmount - totalCost;
+            updated.profitRate = totalCost > 0 ? updated.evalProfitLoss / totalCost : 0;
           }
         }
         return updated;
@@ -1655,6 +1661,7 @@ export default function App() {
                   {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
                     const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
                     const multiplier = isUSD ? exchangeRate : 1;
+                    const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : pf.purchaseAmount;
 
                     if (pf.isManual) {
                       const availableManualNames = Array.from(new Set(
@@ -1724,7 +1731,7 @@ export default function App() {
                           />
                         </td>
                         <td className="py-3 px-4 text-sm text-right text-slate-700">{Number(pf.qty || 0).toLocaleString()}</td>
-                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(pf.purchaseAmount * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] text-slate-400 font-normal">($ {formatCurrency(pf.purchaseAmount, 'USD')})</span>}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-800 font-medium">{formatCurrency(displayBuyAmount * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] text-slate-400 font-normal">($ {formatCurrency(displayBuyAmount, 'USD')})</span>}</td>
                         <td className="py-3 px-4 text-sm text-right text-slate-900 font-semibold">{formatCurrency(pf.currentAmount * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] text-slate-400 font-normal">($ {formatCurrency(pf.currentAmount, 'USD')})</span>}</td>
                         <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.evalProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.evalProfitLoss * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] font-normal opacity-75">($ {formatCurrency(pf.evalProfitLoss, 'USD')})</span>}</td>
                         <td className={`py-3 px-4 text-sm text-right font-bold ${Number(pf.sellProfitLoss || 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(pf.sellProfitLoss * multiplier, isUSD ? 'KRW' : pf.currency)}{isUSD && <span className="block text-[11px] font-normal opacity-75">($ {formatCurrency(pf.sellProfitLoss, 'USD')})</span>}</td>
