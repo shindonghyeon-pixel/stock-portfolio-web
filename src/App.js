@@ -532,11 +532,7 @@ export default function App() {
     }
   };
 
-  // =========================================================================
-  // [요청 공식 반영] 포트폴리오 실질 계산 수행 함수
-  // 1. 매입금액 = 오늘 거래현황 sum(단가 * 수량)
-  // 2. 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
-  // =========================================================================
+  // 포트폴리오 실질 계산 수행 함수
   const executePortfolioCalculation = async (baseDate) => {
     let externalPriceMap = new Map();
     try {
@@ -611,7 +607,6 @@ export default function App() {
       item.buyQty += bQ;
       item.sellQty += sQ;
 
-      // 1. 매입금액 = 오늘 거래현황 sum(단가 * 매수수량)
       if (bQ > 0) {
         item.buyAmount += (bQ * price);
       }
@@ -640,7 +635,7 @@ export default function App() {
       // 최종 보유 수량 = 어제자 수량 + 오늘자 매수수량 - 오늘자 매도수량
       const finalQty = Math.max(0, prevQty + buyQty - sellQty);
 
-      // 2. 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
+      // 평균단가 = (어제자 재고 금액 + 매입 금액) / (어제자 수량 + 오늘자 매수수량)
       const totalBuyQtyDenominator = prevQty + buyQty;
       const avgPrice = totalBuyQtyDenominator > 0 
         ? Math.round((prevInventoryAmount + todayBuyAmount) / totalBuyQtyDenominator)
@@ -1293,7 +1288,8 @@ export default function App() {
               </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
       {successMessage && <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-6 py-3 rounded-xl shadow-lg font-medium">{successMessage}</div>}
 
