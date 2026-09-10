@@ -581,6 +581,7 @@ export default function App() {
       holdingMap.set(key, {
         qty: Number(p.qty || 0),               // 어제자 수량
         avgPrice: Number(p.avgPrice || 0),     // 어제자 평균단가
+        currentPrice: Number(p.currentPrice || 0),
         bank: p.bank,
         purpose: p.purpose,
         name: p.name,
@@ -619,7 +620,7 @@ export default function App() {
     const newPfList = [];
 
     for (const key of allKeys) {
-      const prevItem = holdingMap.get(key) || { qty: 0, avgPrice: 0, sellProfitLoss: 0 };
+      const prevItem = holdingMap.get(key) || { qty: 0, avgPrice: 0, currentPrice: 0, sellProfitLoss: 0 };
       const todayItem = todayTxMap.get(key) || { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 };
       
       const [bank, purpose, name, code, currency] = key.split('|');
@@ -641,29 +642,32 @@ export default function App() {
         ? Math.round((prevInventoryAmount + todayBuyAmount) / totalBuyQtyDenominator)
         : prevAvgPrice;
 
-      // 현재가 파악
+      // 현재가 우선순위: 외부 시트 API > 기존 당일 포트폴리오 > 어제 포트폴리오
       let currentPrice = 0;
       const cleanCode = (code || '').trim();
-      if (externalPriceMap.has(cleanCode)) {
+      
+      if (externalPriceMap.has(cleanCode) && externalPriceMap.get(cleanCode) > 0) {
         currentPrice = externalPriceMap.get(cleanCode);
       } else {
         const existingPf = portfolios.find(p => !p.isManual && p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
         if (existingPf && existingPf.currentPrice > 0) {
           currentPrice = existingPf.currentPrice;
+        } else if (prevItem.currentPrice > 0) {
+          currentPrice = prevItem.currentPrice;
         }
       }
 
-      // 보유 원가(누적 원가) 및 현재 금액
-      const totalCost = finalQty * avgPrice;
+      // 원가 보유 금액 및 현재 평가 금액
+      const purchaseAmount = finalQty * avgPrice;
       const currentAmount = finalQty * currentPrice;
-      const evalProfitLoss = currentAmount - totalCost;
+      const evalProfitLoss = currentAmount - purchaseAmount;
       
       // 매도 손익
       const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
       const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
       const sellProfitLoss = (prevItem.sellProfitLoss || 0) + todaySellProfitLoss;
 
-      const profitRate = totalCost > 0 ? evalProfitLoss / totalCost : 0;
+      const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
       // 수량 0 이하, 오늘 매수 없고, 매도손익도 없으면 제외
       if (finalQty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
@@ -676,12 +680,11 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,               // 가중평균단가
-        currentPrice: currentPrice,
-        qty: finalQty,                    // 최종 보유수량
-        todayBuyAmount: todayBuyAmount,   // 오늘 거래현황 당일 매입금액 (오늘 매수 없으면 0원)
-        purchaseAmount: todayBuyAmount,  // 화면 매입금액 컬럼에 당일 매입금액 매핑
-        totalCost: totalCost,             // 누적 원가
+        avgPrice: avgPrice,             // 가중평균단가
+        currentPrice: currentPrice,     // 현재단가
+        qty: finalQty,                  // 수량
+        todayBuyAmount: todayBuyAmount, // 당일 거래 매수금액
+        purchaseAmount: purchaseAmount, // 보유 원가
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
@@ -1199,10 +1202,10 @@ export default function App() {
         } else {
           if (field === 'currentPrice') {
             const newCurrentPrice = Number(val || 0);
-            const totalCost = updated.qty * (updated.avgPrice || 0);
+            const purCost = updated.purchaseAmount || (updated.qty * (updated.avgPrice || 0));
             updated.currentAmount = updated.qty * newCurrentPrice;
-            updated.evalProfitLoss = updated.currentAmount - totalCost;
-            updated.profitRate = totalCost > 0 ? updated.evalProfitLoss / totalCost : 0;
+            updated.evalProfitLoss = updated.currentAmount - purCost;
+            updated.profitRate = purCost > 0 ? updated.evalProfitLoss / purCost : 0;
           }
         }
         return updated;
@@ -1661,7 +1664,7 @@ export default function App() {
                   {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
                     const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
                     const multiplier = isUSD ? exchangeRate : 1;
-                    const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : pf.purchaseAmount;
+                    const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : (pf.buyAmount || 0);
 
                     if (pf.isManual) {
                       const availableManualNames = Array.from(new Set(
