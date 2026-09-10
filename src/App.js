@@ -543,7 +543,9 @@ export default function App() {
     }
   };
 
-  // 포트폴리오 실질 계산 수행 함수
+  // =========================================================================
+  // [수정 완료] 포트폴리오 실질 계산 수행 함수 (요청 1, 2, 3번 반영)
+  // =========================================================================
   const executePortfolioCalculation = async (baseDate) => {
     let externalPriceMap = new Map();
     try {
@@ -578,34 +580,36 @@ export default function App() {
       console.error("구글시트 API 연동 실패:", err);
     }
 
+    // 어제 일자 구하기
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    const priorTxs = transactions.filter(t => (t.date || '') <= prevDateStr);
+    // 어제자 포트폴리오 잔고 데이터 수집
+    const prevDayPortfolios = portfolios.filter(p => p.baseDate === prevDateStr);
     const holdingMap = new Map();
 
-    priorTxs.forEach(t => {
-      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
-      if (!holdingMap.has(key)) {
-        holdingMap.set(key, { qty: 0, totalCost: 0, bank: t.bank, purpose: t.purpose, name: t.name, code: t.code, currency: t.currency });
-      }
-      const item = holdingMap.get(key);
-      const buyQ = Number(t.buyQty || 0);
-      const sellQ = Number(t.sellQty || 0);
-      const price = Number(t.price || 0);
-      
-      const newQty = item.qty + buyQ - sellQ;
-      if (buyQ > 0) {
-        item.totalCost += (buyQ * price);
-      }
-      item.qty = newQty;
+    prevDayPortfolios.forEach(p => {
+      const key = `${p.bank}|${p.purpose}|${p.name}|${p.code}|${p.currency || 'KRW'}`;
+      holdingMap.set(key, {
+        qty: Number(p.qty || 0),
+        avgPrice: Number(p.avgPrice || 0),
+        bank: p.bank,
+        purpose: p.purpose,
+        name: p.name,
+        code: p.code,
+        currency: p.currency || 'KRW',
+        sellProfitLoss: Number(p.sellProfitLoss || 0)
+      });
     });
 
+    // 1번 로직 반영: 기준일자와 거래일자가 같은(tx.date === baseDate) 당일 거래 내역만 필터링
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
     const todayTxMap = new Map();
+
+    // 2번 로직 반영: 은행, 목적, 종목별로 매수수량이 0보다 큰 경우에만 매입금액 SUM(단가 * 매수수량)
     todayTxs.forEach(t => {
-      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency}`;
+      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency || 'KRW'}`;
       if (!todayTxMap.has(key)) {
         todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 });
       }
@@ -613,8 +617,11 @@ export default function App() {
       const bQ = Number(t.buyQty || 0);
       const sQ = Number(t.sellQty || 0);
       const price = Number(t.price || 0);
+
       item.buyQty += bQ;
       item.sellQty += sQ;
+
+      // 매수수량이 0보다 큰 경우에만 매입금액 SUM
       if (bQ > 0) {
         item.buyAmount += bQ * price;
       }
@@ -627,23 +634,20 @@ export default function App() {
     const newPfList = [];
 
     for (const key of allKeys) {
-      const prevItem = holdingMap.get(key) || { qty: 0, totalCost: 0 };
+      const prevItem = holdingMap.get(key) || { qty: 0, avgPrice: 0, sellProfitLoss: 0 };
       const todayItem = todayTxMap.get(key) || { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 };
       
       const [bank, purpose, name, code, currency] = key.split('|');
       
-      const prevQty = prevItem.qty;
-      const prevAvgPrice = prevQty > 0 ? (prevItem.totalCost / prevQty) : 0;
-      
-      const buyQty = todayItem.buyQty;
-      const sellQty = todayItem.sellQty;
-      const buyAmount = todayItem.buyAmount;
+      const prevQty = prevItem.qty;             // 어제자 수량
+      const buyQty = todayItem.buyQty;          // 오늘 매수수량
+      const sellQty = todayItem.sellQty;        // 오늘 매도수량
+      const buyAmount = todayItem.buyAmount;    // 오늘 매입금액 SUM(단가 * 매수수량, 매수수량 > 0)
 
-      const qty = Math.max(0, prevQty + buyQty - sellQty);
+      // 3번 로직 반영: 수량 = 어제자 수량 + 매수수량 - 매도수량
+      const finalQty = Math.max(0, prevQty + buyQty - sellQty);
 
-      const denom = prevQty + buyQty;
-      const avgPrice = denom > 0 ? ((prevAvgPrice * prevQty) + buyAmount) / denom : prevAvgPrice;
-
+      // 현재가 파악
       let currentPrice = 0;
       const cleanCode = (code || '').trim();
       if (externalPriceMap.has(cleanCode)) {
@@ -655,22 +659,25 @@ export default function App() {
         }
       }
 
-      const purchaseAmount = qty * avgPrice;
-      const currentAmount = qty * currentPrice;
+      // 3번 로직 반영: 평균단가 = (매입금액 + (어제자 수량 * 현재단가)) / (매수수량 + 어제자 수량)
+      const denominator = buyQty + prevQty;
+      const avgPrice = denominator > 0 
+        ? Math.round((buyAmount + (prevQty * currentPrice)) / denominator)
+        : prevItem.avgPrice;
+
+      const purchaseAmount = finalQty * avgPrice;
+      const currentAmount = finalQty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
       
-      // 실제 매도 단가(매도가격)를 기반으로 매매손익 계산 ((매도가격 - 평균단가) * 매도수량)
+      // 매도에 따른 매매손익 계산
       const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
       const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
-      
-      const prevPfItem = portfolios.find(p => !p.isManual && p.baseDate === prevDateStr && p.bank === bank && p.purpose === purpose && p.code === code);
-      const prevSellProfitLoss = prevPfItem ? Number(prevPfItem.sellProfitLoss || 0) : 0;
-      const sellProfitLoss = prevSellProfitLoss + todaySellProfitLoss;
+      const sellProfitLoss = (prevItem.sellProfitLoss || 0) + todaySellProfitLoss;
 
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
-      // 수량이 0이더라도 당일 매수가 있었거나 매매손익이 존재하는 경우 포트폴리오에 포함
-      if (qty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
+      // 잔고 수량이 0 이하이고 거래도 없으면 제외
+      if (finalQty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
 
       newPfList.push({
         id: 'pf_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
@@ -680,9 +687,9 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,
+        avgPrice: avgPrice,             // 요청 공식으로 산출된 평균단가
         currentPrice: currentPrice,
-        qty: qty,
+        qty: finalQty,                  // 수량 = 어제자 수량 + 매수 - 매도
         purchaseAmount: purchaseAmount,
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
@@ -696,7 +703,6 @@ export default function App() {
     const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
 
     if (prevManualItems.length > 0) {
-      // 1. 전일자에 수동 데이터가 존재하는 경우: 해당 데이터를 그대로 가지고 와서 새 기준일자용으로 복사 추가
       prevManualItems.forEach(manual => {
         const currentAmount = Number(manual.currentAmount || 0);
         const purchaseAmount = Number(manual.purchaseAmount || 0);
@@ -712,16 +718,14 @@ export default function App() {
         });
       });
 
-      // 기준일자의 기존 데이터(자동+수동 전체) 삭제 후 새로 만든 newPfList로 교체
       setPortfolios(prev => [
         ...prev.filter(p => p.baseDate !== baseDate),
         ...newPfList
       ]);
     } else {
-      // 2. 전일자에 수동 데이터가 없는 경우: 기존 기준일자(baseDate)의 수동 데이터는 삭제하지 않고 유지
       setPortfolios(prev => [
-        ...prev.filter(p => !(p.baseDate === baseDate && !p.isManual)), // 기준일자의 자동계산 데이터만 삭제
-        ...newPfList // 새로 계산된 자동 항목 추가 (기존 수동 데이터는 유지됨)
+        ...prev.filter(p => !(p.baseDate === baseDate && !p.isManual)),
+        ...newPfList
       ]);
     }
 
