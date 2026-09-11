@@ -753,7 +753,6 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // 포트 이력 계산 로직 (합계 금액 포함 반영)
   const executePortHistoryCalculation = (startDateStr, endDateStr) => {
     if (!startDateStr || !endDateStr) {
       showError('시작일자와 종료일자를 모두 입력해주세요.');
@@ -826,7 +825,6 @@ export default function App() {
         });
       });
 
-      // 합계 금액 계산 (모든 자산 변수의 합)
       const totalSum = Object.values(historyVars).reduce((acc, val) => acc + val, 0);
 
       const historyId = 'ph_' + targetDateStr.replace(/-/g, '') + '_' + Math.random().toString(36).substr(2, 4);
@@ -853,7 +851,6 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  // [신규] 포트 이력 원천데이터 엑셀 다운로드 핸들러
   const handleExportPortHistoryExcel = () => {
     if (filteredPortHistories.length === 0) {
       showError('엑셀로 다운로드할 조회된 포트 이력 데이터가 없습니다.');
@@ -1344,7 +1341,6 @@ export default function App() {
     }
   };
 
-  // 포트 이력 저장 핸들러 (합계금액 포함)
   const handleSavePortHistoriesToDatabase = async () => {
     if (isSavingPortHistories) return;
     setIsSavingPortHistories(true);
@@ -1944,7 +1940,7 @@ export default function App() {
                     if (pf.isManual) {
                       const availableManualNames = Array.from(new Set(
                         stocks
-                          .filter(s => (s.bank || '').trim() === (pf.bank || '').trim() && (s.purpose || '').trim() === (pf.purpose || '').trim() && !s.code?.trim())
+                          .filter(s => s && (s.bank || '').trim() === (pf.bank || '').trim() && (s.purpose || '').trim() === (pf.purpose || '').trim() && !s.code?.trim())
                           .map(s => s.name?.trim())
                           .filter(Boolean)
                       ));
@@ -2024,7 +2020,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 4.5. 포트 이력 탭 화면 (합계금액 및 엑셀 원천데이터 버튼 추가) */}
+        {/* 4.5. 포트 이력 탭 화면 */}
         {activeTab === 'portHistory' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
@@ -2040,7 +2036,6 @@ export default function App() {
                 <button onClick={() => executePortHistoryCalculation(portHistoryStartDate, portHistoryEndDate)} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
                 <button onClick={handleSavePortHistoriesToDatabase} disabled={isSavingPortHistories} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortHistories ? '저장 중...' : '저장'}</button>
                 <button onClick={handleDeletePortHistoryRows} disabled={selectedPortHistoryIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortHistoryIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
-                {/* [요청사항 반영] 삭제 버튼 옆에 엑셀 버튼 추가 */}
                 <button onClick={handleExportPortHistoryExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredPortHistories.length} 건</span></div>
