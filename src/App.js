@@ -19,7 +19,8 @@ import {
   X,
   Play,
   HelpCircle,
-  Download
+  Download,
+  History
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -162,6 +163,16 @@ export default function App() {
   const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
   const [exchangeRate, setExchangeRate] = useState(1350);
 
+  // [신규] 4.5. 포트 이력 상태
+  const [portHistoryStartDate, setPortHistoryStartDate] = useState(getTodayString());
+  const [portHistoryEndDate, setPortHistoryEndDate] = useState(getTodayString());
+  const [appliedPortHistoryStartDate, setAppliedPortHistoryStartDate] = useState(getTodayString());
+  const [appliedPortHistoryEndDate, setAppliedPortHistoryEndDate] = useState(getTodayString());
+  const [portHistories, setPortHistories] = useState([]);
+  const [selectedPortHistoryIds, setSelectedPortHistoryIds] = useState([]);
+  const [deletedPortHistoryIds, setDeletedPortHistoryIds] = useState([]);
+  const [isSavingPortHistories, setIsSavingPortHistories] = useState(false);
+
   // 5. 총액 Trend 상태
   const [trendStartDate, setTrendStartDate] = useState(getYearFirstDayString());
   const [trendEndDate, setTrendEndDate] = useState(getTodayString());
@@ -233,6 +244,16 @@ export default function App() {
     if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
     return true;
   }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
+
+  // [신규] 포트 이력 필터링
+  const filteredPortHistories = useMemo(() => {
+    return portHistories.filter(ph => {
+      if (!ph.date) return true;
+      if (appliedPortHistoryStartDate && ph.date < appliedPortHistoryStartDate) return false;
+      if (appliedPortHistoryEndDate && ph.date > appliedPortHistoryEndDate) return false;
+      return true;
+    }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [portHistories, appliedPortHistoryStartDate, appliedPortHistoryEndDate]);
 
   const trendTotalPayment = useMemo(() => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
@@ -321,6 +342,7 @@ export default function App() {
     fetchStocks();
     fetchTransactions();
     fetchPortfolios();
+    fetchPortHistories(); // [신규] 포트 이력 조회
     fetchTrends();
     fetchExchangeRate();
   }, []);
@@ -516,6 +538,21 @@ export default function App() {
       console.error("포트폴리오 데이터 불러오기 실패:", error);
     } finally {
       setLoadingPortfolios(false);
+    }
+  };
+
+  // [신규] 포트 이력 데이터 불러오기 함수
+  const fetchPortHistories = async () => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "portHistories"));
+      let dataList = querySnapshot.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...docSnap.data()
+      }));
+      setPortHistories(dataList);
+      setDeletedPortHistoryIds([]);
+    } catch (error) {
+      console.error("포트 이력 데이터 불러오기 실패:", error);
     }
   };
 
@@ -718,6 +755,108 @@ export default function App() {
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
+  // [신규] 포트 이력 계산 로직 구현
+  const executePortHistoryCalculation = (startDateStr, endDateStr) => {
+    if (!startDateStr || !endDateStr) {
+      showError('시작일자와 종료일자를 모두 입력해주세요.');
+      return;
+    }
+    if (startDateStr > endDateStr) {
+      showError('시작일자가 종료일자보다 클 수 없습니다.');
+      return;
+    }
+
+    let currDateObj = new Date(startDateStr);
+    const finalDateObj = new Date(endDateStr);
+
+    const newHistoryMap = new Map();
+    // 기존에 이미 불러와진 이력 데이터가 있다면 맵에 초기 세팅
+    portHistories.forEach(ph => {
+      if (ph.date) newHistoryMap.set(ph.date, ph);
+    });
+
+    while (currDateObj <= finalDateObj) {
+      const y = currDateObj.getFullYear();
+      const m = String(currDateObj.getMonth() + 1).padStart(2, '0');
+      const d = String(currDateObj.getDate()).padStart(2, '0');
+      const targetDateStr = `${y}-${m}-${d}`;
+
+      // 6개 변수 선언 (요청사항 반영: 한국주식, 미국주식, 미국채, 한국채, 단기채, 현금, 예금, 금)
+      let historyVars = {
+        한국주식: 0,
+        미국주식: 0,
+        미국채: 0,
+        한국채: 0,
+        단기채: 0,
+        현금: 0,
+        예금: 0,
+        금: 0
+      };
+
+      // 1) 시작일자에 해당하는 포트폴리오 화면의 전체 데이터 검색
+      const pfItemsForDate = portfolios.filter(p => p.baseDate === targetDateStr);
+
+      pfItemsForDate.forEach(pf => {
+        const pfBank = (pf.bank || '').trim();
+        const pfPurpose = (pf.purpose || '').trim();
+        const pfCode = (pf.code || '').trim();
+        const pfName = (pf.name || '').trim();
+        
+        const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
+        const multiplier = isUSD ? exchangeRate : 1;
+        const pfCurrentAmountKRW = Number(pf.currentAmount || 0) * multiplier;
+
+        // 2) 종목관리 화면에서 은행, 목적, 종목코드(또는 종목명)가 일치하는 행들을 찾음
+        const matchingStocks = stocks.filter(s => {
+          const sBank = (s.bank || '').trim();
+          const sPurpose = (s.purpose || '').trim();
+          const sCode = (s.code || '').trim();
+          const sName = (s.name || '').trim();
+
+          if (sBank !== pfBank || sPurpose !== pfPurpose) return false;
+          if (pfCode) {
+            return sCode === pfCode;
+          } else {
+            return sName === pfName;
+          }
+        });
+
+        // 3) 일치하는 종목관리 행들에 대해 유형 비율을 곱하여 변수에 누적
+        matchingStocks.forEach(stk => {
+          const categoryName = (stk.category || '').trim();
+          const ratioVal = Number(stk.ratio || 0); // 예: 0.5 또는 50 (비율 계산 방식에 맞춤)
+          const addedVal = pfCurrentAmountKRW * (ratioVal > 1 ? ratioVal / 100 : ratioVal);
+
+          if (historyVars.hasOwnProperty(categoryName)) {
+            historyVars[categoryName] += addedVal;
+          }
+        });
+      });
+
+      const historyId = 'ph_' + targetDateStr.replace(/-/g, '') + '_' + Math.random().toString(36).substr(2, 4);
+      newHistoryMap.set(targetDateStr, {
+        id: historyId,
+        date: targetDateStr,
+        한국주식: historyVars.한국주식,
+        미국주식: historyVars.미국주식,
+        미국채: historyVars.미국채,
+        한국채: historyVars.한국채,
+        단기채: historyVars.단기채,
+        현금: historyVars.현금,
+        예금: historyVars.예금,
+        금: historyVars.금
+      });
+
+      // 날짜 + 1일
+      currDateObj.setDate(currDateObj.getDate() + 1);
+    }
+
+    const updatedList = Array.from(newHistoryMap.values());
+    setPortHistories(updatedList);
+    setSuccessMessage('포트 이력 계산이 완료되었습니다.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
   const handleCalculatePortfolio = async () => {
     const baseDate = pfBaseDate || getTodayString();
     const hasExistingData = portfolios.some(p => p.baseDate === baseDate);
@@ -847,6 +986,14 @@ export default function App() {
     setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_') && !String(id).startsWith('temp_manual_') && !String(id).startsWith('manual_'))]);
     setPortfolios(prev => prev.filter(p => !selectedPortfolioIds.includes(p.id)));
     setSelectedPortfolioIds([]);
+  };
+
+  // [신규] 포트 이력 삭제 핸들러
+  const handleDeletePortHistoryRows = () => {
+    if (selectedPortHistoryIds.length === 0) return;
+    setDeletedPortHistoryIds(prev => [...prev, ...selectedPortHistoryIds.filter(id => !String(id).startsWith('ph_'))]);
+    setPortHistories(prev => prev.filter(ph => !selectedPortHistoryIds.includes(ph.id)));
+    setSelectedPortHistoryIds([]);
   };
 
   const handleDeleteTrendRows = () => {
@@ -1140,6 +1287,40 @@ export default function App() {
     }
   };
 
+  // [신규] 포트 이력 DB 저장 핸들러
+  const handleSavePortHistoriesToDatabase = async () => {
+    if (isSavingPortHistories) return;
+    setIsSavingPortHistories(true);
+    try {
+      const batch = writeBatch(db);
+      deletedPortHistoryIds.forEach(id => batch.delete(doc(db, "portHistories", id)));
+      portHistories.forEach(ph => {
+        const ref = String(ph.id).startsWith('ph_') ? doc(collection(db, "portHistories")) : doc(db, "portHistories", ph.id);
+        const data = {
+          date: ph.date,
+          한국주식: Number(ph.한국주식 || 0),
+          미국주식: Number(ph.미국주식 || 0),
+          미국채: Number(ph.미국채 || 0),
+          한국채: Number(ph.한국채 || 0),
+          단기채: Number(ph.단기채 || 0),
+          현금: Number(ph.현금 || 0),
+          예금: Number(ph.예금 || 0),
+          금: Number(ph.금 || 0)
+        };
+        if (String(ph.id).startsWith('ph_')) data.createdAt = serverTimestamp();
+        batch.set(ref, data, { merge: true });
+      });
+      await batch.commit();
+      await fetchPortHistories();
+      setSuccessMessage('포트 이력 저장 완료!');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err) {
+      showError(`저장 실패: ${err.message}`);
+    } finally {
+      setIsSavingPortHistories(false);
+    }
+  };
+
   const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
   const handleStockRowChange = (id, field, val) => {
     setStocks(prev => prev.map(s => {
@@ -1335,6 +1516,8 @@ export default function App() {
           <button onClick={() => setActiveTab('stock')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'stock' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><Layers size={18} />종목 관리</button>
           <button onClick={() => setActiveTab('transaction')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'transaction' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><ArrowLeftRight size={18} />거래현황</button>
           <button onClick={() => setActiveTab('portfolio')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'portfolio' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><PiggyBank size={18} />포트폴리오 현황</button>
+          {/* [신규] 포트 이력 탭 추가 */}
+          <button onClick={() => setActiveTab('portHistory')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'portHistory' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><History size={18} />포트 이력</button>
           <button onClick={() => setActiveTab('trend')} className={`flex items-center gap-2 px-6 py-3 text-sm font-medium border-b-2 whitespace-nowrap ${activeTab === 'trend' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50' : 'border-transparent text-slate-500 hover:text-slate-700'}`}><TrendingUp size={18} />총액 Trend</button>
         </div>
 
@@ -1647,7 +1830,6 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">기준일자</span><input type="date" value={pfBaseDate} onChange={e => setPfBaseDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" /></div>
                 
-                {/* 1. 환율 입력 필드 너비 축소 (w-16, px-2 적용으로 내부 공백 제거) */}
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2 py-1.5">
                   <span className="text-xs text-slate-500 font-medium whitespace-nowrap">환율(USD/KRW)</span>
                   <input 
@@ -1669,7 +1851,6 @@ export default function App() {
                 <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
               </div>
 
-              {/* 2. 요약 영역 좌측 공백 제거 (gap-5 및 width 정리) */}
               <div className="flex items-center gap-5 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-start xl:justify-end">
                 <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">현재금액 총액</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
@@ -1780,6 +1961,62 @@ export default function App() {
                       </tr>
                     );
                   }) : <tr><td colSpan="13" className="py-16 text-center text-slate-500">조회된 포트폴리오 현황이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* [신규] 포트 이력 탭 화면 추가 */}
+        {activeTab === 'portHistory' && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+                  <span className="text-xs text-slate-500 font-medium">시작일자</span>
+                  <input type="date" value={portHistoryStartDate} onChange={e => setPortHistoryStartDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                  <span className="text-slate-400">~</span>
+                  <span className="text-xs text-slate-500 font-medium">종료일자</span>
+                  <input type="date" value={portHistoryEndDate} onChange={e => setPortHistoryEndDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                </div>
+                <button onClick={() => { setAppliedPortHistoryStartDate(portHistoryStartDate); setAppliedPortHistoryEndDate(portHistoryEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={() => executePortHistoryCalculation(portHistoryStartDate, portHistoryEndDate)} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                <button onClick={handleSavePortHistoriesToDatabase} disabled={isSavingPortHistories} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortHistories ? '저장 중...' : '저장'}</button>
+                <button onClick={handleDeletePortHistoryRows} disabled={selectedPortHistoryIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortHistoryIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+              </div>
+              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredPortHistories.length} 건</span></div>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left border-collapse min-w-[1250px]">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
+                  <tr>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortHistories.length > 0 && selectedPortHistoryIds.length === filteredPortHistories.length} onChange={e => setSelectedPortHistoryIds(e.target.checked ? filteredPortHistories.map(ph => ph.id) : [])} /></th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">일자</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">한국주식</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">미국주식</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">미국채</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">한국채</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">단기채</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">현금</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">예금</th>
+                    <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">금</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredPortHistories.length > 0 ? filteredPortHistories.map(ph => (
+                    <tr key={ph.id} className={`hover:bg-slate-50 ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''}`}>
+                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
+                      <td className="py-3 px-4 text-sm font-medium text-slate-800">{ph.date}</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국주식)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국주식)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국채)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국채)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.단기채)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.현금)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.예금)}원</td>
+                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.금)}원</td>
+                    </tr>
+                  )) : <tr><td colSpan="10" className="py-16 text-center text-slate-500">조회된 포트 이력 내역이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
                 </tbody>
               </table>
             </div>
