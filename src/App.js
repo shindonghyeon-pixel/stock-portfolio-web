@@ -222,7 +222,7 @@ export default function App() {
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
       if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(a.purpose || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
@@ -533,7 +533,6 @@ export default function App() {
     }
   };
 
-  // 포트폴리오 실질 계산 수행 함수
   const executePortfolioCalculation = async (baseDate) => {
     let externalPriceMap = new Map();
     try {
@@ -568,20 +567,18 @@ export default function App() {
       console.error("구글시트 API 연동 실패:", err);
     }
 
-    // 어제 일자 구하기
     const d = new Date(baseDate);
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    // 어제자 포트폴리오 잔고 수집
     const prevDayPortfolios = portfolios.filter(p => p.baseDate === prevDateStr);
     const holdingMap = new Map();
 
     prevDayPortfolios.forEach(p => {
       const key = `${p.bank}|${p.purpose}|${p.name}|${p.code}|${p.currency || 'KRW'}`;
       holdingMap.set(key, {
-        qty: Number(p.qty || 0),             // 어제자 수량
-        avgPrice: Number(p.avgPrice || 0),     // 어제자 평균단가
+        qty: Number(p.qty || 0),
+        avgPrice: Number(p.avgPrice || 0),
         currentPrice: Number(p.currentPrice || 0),
         bank: p.bank,
         purpose: p.purpose,
@@ -592,7 +589,6 @@ export default function App() {
       });
     });
 
-    // 오늘(baseDate) 거래현황 집계
     const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
     const todayTxMap = new Map();
 
@@ -626,24 +622,21 @@ export default function App() {
       
       const [bank, purpose, name, code, currency] = key.split('|');
       
-      const prevQty = prevItem.qty;                  // 어제자 수량
-      const prevAvgPrice = prevItem.avgPrice;        // 어제자 평균단가
-      const prevInventoryAmount = prevQty * prevAvgPrice; // 어제자 재고 금액 (어제자 수량 * 평균단가)
+      const prevQty = prevItem.qty;
+      const prevAvgPrice = prevItem.avgPrice;
+      const prevInventoryAmount = prevQty * prevAvgPrice;
 
-      const buyQty = todayItem.buyQty;              // 오늘자 매수수량
-      const sellQty = todayItem.sellQty;            // 오늘자 매도수량
-      const todayBuyAmount = todayItem.buyAmount;   // 오늘 거래현황 당일 매입금액 sum(단가 * 수량)
+      const buyQty = todayItem.buyQty;
+      const sellQty = todayItem.sellQty;
+      const todayBuyAmount = todayItem.buyAmount;
 
-      // 최종 보유 수량 = 어제자 수량 + 오늘자 매수수량 - 오늘자 매도수량
       const finalQty = Math.max(0, prevQty + buyQty - sellQty);
 
-      // 평균단가 = (어제자 재고 금액 + 당일 매입 금액) / (어제자 수량 + 오늘자 매수수량)
       const totalBuyQtyDenominator = prevQty + buyQty;
       const avgPrice = totalBuyQtyDenominator > 0 
         ? Math.round((prevInventoryAmount + todayBuyAmount) / totalBuyQtyDenominator)
         : prevAvgPrice;
 
-      // 현재가 우선순위: 외부 시트 API > 기존 당일 포트폴리오 > 어제 포트폴리오
       let currentPrice = 0;
       const cleanCode = (code || '').trim();
       
@@ -658,19 +651,16 @@ export default function App() {
         }
       }
 
-      // 원가 보유 금액 및 현재 평가 금액
       const purchaseAmount = finalQty * avgPrice;
       const currentAmount = finalQty * currentPrice;
       const evalProfitLoss = currentAmount - purchaseAmount;
       
-      // 매도 손익
       const avgSellPrice = sellQty > 0 ? (todayItem.sellAmount / sellQty) : 0;
       const todaySellProfitLoss = sellQty > 0 ? (avgSellPrice - avgPrice) * sellQty : 0;
       const sellProfitLoss = (prevItem.sellProfitLoss || 0) + todaySellProfitLoss;
 
       const profitRate = purchaseAmount > 0 ? evalProfitLoss / purchaseAmount : 0;
 
-      // 수량 0 이하, 오늘 매수 없고, 매도손익도 없으면 제외
       if (finalQty <= 0 && buyQty === 0 && sellProfitLoss === 0) continue;
 
       newPfList.push({
@@ -681,11 +671,11 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,                   // 가중평균단가
-        currentPrice: currentPrice,           // 현재단가
-        qty: finalQty,                        // 수량
-        todayBuyAmount: todayBuyAmount,       // 당일 거래 매수금액
-        purchaseAmount: purchaseAmount,       // 보유 원가
+        avgPrice: avgPrice,
+        currentPrice: currentPrice,
+        qty: finalQty,
+        todayBuyAmount: todayBuyAmount,
+        purchaseAmount: purchaseAmount,
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
@@ -694,7 +684,6 @@ export default function App() {
       });
     }
 
-    // 수동 입력 데이터 처리
     const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
 
     if (prevManualItems.length > 0) {
@@ -881,23 +870,39 @@ export default function App() {
     }
   };
 
-  // 요청사항 1: 납입금액 현재 조회된 데이터 엑셀 export 기능 추가
-  const handleExportPaymentExcel = () => {
-    if (filteredPayments.length === 0) {
-      showError('엑셀로 다운로드할 조회된 데이터가 없습니다.');
+  // 포트폴리오 현황 엑셀 다운로드 기능
+  const handleExportPortfolioExcel = () => {
+    if (filteredPortfolios.length === 0) {
+      showError('엑셀로 다운로드할 조회된 포트폴리오 데이터가 없습니다.');
       return;
     }
-    const exportData = filteredPayments.map(p => ({
-      '납입일자': p.date || '',
-      '은행': p.bank || '',
-      '목적': p.purpose || '',
-      '금액': Number(p.amount || 0)
-    }));
+    const exportData = filteredPortfolios.map(pf => {
+      const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
+      const multiplier = isUSD ? exchangeRate : 1;
+      const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : (pf.buyAmount || 0);
+
+      return {
+        '기준일자': pf.baseDate || pfBaseDate,
+        '은행': pf.bank || '',
+        '목적': pf.purpose || '',
+        '종목명': pf.name || '',
+        '종목코드': pf.code || '',
+        '평균단가': pf.avgPrice || 0,
+        '현재단가': pf.currentPrice || 0,
+        '수량': pf.qty || 0,
+        '매입금액': displayBuyAmount * multiplier,
+        '현재금액': (pf.currentAmount || 0) * multiplier,
+        '평가손익': (pf.evalProfitLoss || 0) * multiplier,
+        '매매손익': (pf.sellProfitLoss || 0) * multiplier,
+        '이익율': Number(pf.profitRate || 0),
+        '통화': pf.currency || 'KRW'
+      };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "납입금액목록");
-    XLSX.writeFile(workbook, `납입금액_조회내역_${getTodayString()}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "포트폴리오현황");
+    XLSX.writeFile(workbook, `포트폴리오현황_${getTodayString()}.xlsx`);
   };
 
   const showError = (message) => {
@@ -1257,7 +1262,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 재계산 확인 팝업 (예/아니오) */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
@@ -1286,7 +1290,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 총액 Trend 꺾은선 그래프 모달 */}
       {isTrendChartOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 flex flex-col">
@@ -1341,24 +1344,17 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                {/* 요청사항 2: 조회 버튼을 엑셀 다운로드 버튼 옆으로 이동 */}
-                <div className="flex items-center gap-2">
-                  <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
-                </div>
+                <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
+                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
                 <button onClick={handleAddRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteRows} disabled={selectedIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedIds.length > 0 ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}</button>
                 <button onClick={() => triggerExcelUpload('payment')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
                 <button onClick={handleSaveToDatabase} disabled={isSaving} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSaving ? '저장 중...' : '저장'}</button>
-                {/* 요청사항 1: 저장 버튼 옆에 엑셀 다운로드 버튼 생성 */}
-                <button onClick={handleExportPaymentExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀 다운로드</button>
-                {/* 조회 버튼을 엑셀 다운로드 버튼 옆으로 이동 */}
-                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
               </div>
-              {/* 요청사항 3: 총액보는 필드의 넓이를 전체 목적필드 조회 조건 옆까지 늘려서 숫자가 한줄에 나올 수 있도록 함 */}
-              <div className="flex items-center gap-6 bg-white px-6 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-around xl:justify-end min-w-[420px]">
-                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto">
+                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-lg font-bold text-slate-800">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-base sm:text-lg font-bold text-indigo-700 whitespace-nowrap">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-lg font-bold text-indigo-700">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
               </div>
             </div>
             <div className="flex-1 overflow-auto">
@@ -1645,7 +1641,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 4. 포트폴리오 현황 탭 */}
+        {/* 4. 포트폴리오 현황 탭 (요청사항 반영) */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
@@ -1654,18 +1650,22 @@ export default function App() {
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">환율(USD/KRW)</span><input type="number" step="any" value={exchangeRate} onChange={e => setExchangeRate(parseFloat(e.target.value) || 0)} className="w-24 text-sm outline-none bg-transparent font-medium text-right" /></div>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">은행</span><select value={pfBankFilter} onChange={e => setPfBankFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 은행</option>{availableBanks.map(b => <option key={b} value={b}>{b}</option>)}</select></div>
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">목적</span><select value={pfPurposeFilter} onChange={e => setPfPurposeFilter(e.target.value)} className="text-sm outline-none bg-transparent font-medium"><option value="">전체 목적</option>{availablePurposes.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
-                <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
-                <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
                 <button onClick={handleAddPortfolioRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeletePortfolioRows} disabled={selectedPortfolioIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortfolioIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
                 <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
+                {/* 요청사항 1: 저장 버튼 옆에 엑셀 다운로드 버튼 추가 */}
+                <button onClick={handleExportPortfolioExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀 다운로드</button>
+                {/* 요청사항 2: 엑셀 다운로드 버튼 옆으로 조회 버튼 이동 */}
+                <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
               </div>
-              <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
-                <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">현재금액 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
-                <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-[11px] text-indigo-500 font-medium">평가손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
-                <div className="w-px h-8 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-[11px] text-emerald-600 font-medium">매매손익 총액</span><span className={`text-sm font-bold ${filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
+              {/* 요청사항 3: 총액 필드 넓이를 전체 목적필드 조회 조건 옆까지 늘려 한 줄로 표시 */}
+              <div className="flex items-center gap-6 bg-white px-6 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-around xl:justify-end min-w-[500px]">
+                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">현재금액 총액</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
+                <div className="w-px h-10 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">평가손익 총액</span><span className={`text-base sm:text-lg font-bold whitespace-nowrap ${filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
+                <div className="w-px h-10 bg-slate-200"></div>
+                <div className="flex flex-col"><span className="text-xs text-emerald-600 font-medium">매매손익 총액</span><span className={`text-base sm:text-lg font-bold whitespace-nowrap ${filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.sellProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
               </div>
             </div>
             <div className="flex-1 overflow-auto">
