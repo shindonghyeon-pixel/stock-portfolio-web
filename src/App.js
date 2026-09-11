@@ -163,7 +163,7 @@ export default function App() {
   const [appliedPfPurposeFilter, setAppliedPfPurposeFilter] = useState('');
   const [exchangeRate, setExchangeRate] = useState(1350);
 
-  // 4.5. 포트 이력 상태
+  // 4.5. 포트 이력 상태 (기본 비율 이미지 값으로 설정)
   const [portHistoryStartDate, setPortHistoryStartDate] = useState(getTodayString());
   const [portHistoryEndDate, setPortHistoryEndDate] = useState(getTodayString());
   const [appliedPortHistoryStartDate, setAppliedPortHistoryStartDate] = useState(getTodayString());
@@ -173,8 +173,8 @@ export default function App() {
   const [deletedPortHistoryIds, setDeletedPortHistoryIds] = useState([]);
   const [isSavingPortHistories, setIsSavingPortHistories] = useState(false);
   
-  // 포트 이력 Simulation 관련 추가 상태
-  const [portHistRatios, setPortHistRatios] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
+  // 포트 이력 Simulation 관련 추가 상태 (기본 비율 이미지 값 반영)
+  const [portHistRatios, setPortHistRatios] = useState({ 한국주식: 0.275, 미국주식: 0.275, 미국채: 0.05, 한국채: 0.05, 단기채: 0.075, 현금: 0.15, 예금: 0.05, 금: 0.075 });
   const [portHistTargets, setPortHistTargets] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
   const [portHistDiffs, setPortHistDiffs] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
   const [activePortHistoryId, setActivePortHistoryId] = useState(null);
@@ -1402,13 +1402,20 @@ export default function App() {
     }
   };
 
-  // 포트 이력 Simulation 실행 함수 추가
+  // 포트 이력 Simulation 실행 함수 수정 (체크박스 선택이나 행 클릭으로 지정된 activePortHistoryId를 안전하게 참조)
   const handleSimulation = () => {
-    if (!activePortHistoryId) {
+    // 1. activePortHistoryId가 없으면 선택된 체크박스(selectedPortHistoryIds) 중 첫 번째 값을 대체로 사용 시도
+    let targetId = activePortHistoryId;
+    if (!targetId && selectedPortHistoryIds.length > 0) {
+      targetId = selectedPortHistoryIds[0];
+    }
+
+    if (!targetId) {
       showError('Simulation을 수행할 하단 행을 선택해주세요.');
       return;
     }
-    const targetRow = filteredPortHistories.find(ph => ph.id === activePortHistoryId);
+
+    const targetRow = filteredPortHistories.find(ph => ph.id === targetId);
     if (!targetRow) {
       showError('선택된 행을 찾을 수 없습니다.');
       return;
@@ -2109,7 +2116,7 @@ export default function App() {
                 <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredPortHistories.length} 건</span></div>
               </div>
 
-              {/* 두 번째 줄: 비율 필드 (한국주식, 미국주식, 미국채, 한국채, 단기채, 현금, 예금, 금) */}
+              {/* 두 번째 줄: 비율 필드 */}
               <div className="flex flex-wrap items-center gap-2 bg-indigo-50/40 p-3 rounded-lg border border-indigo-100">
                 <span className="text-xs font-bold text-indigo-700 mr-2">비율 설정:</span>
                 {['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'].map(cat => (
@@ -2153,7 +2160,13 @@ export default function App() {
               <table className="w-full text-left border-collapse min-w-[1350px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortHistories.length > 0 && selectedPortHistoryIds.length === filteredPortHistories.length} onChange={e => setSelectedPortHistoryIds(e.target.checked ? filteredPortHistories.map(ph => ph.id) : [])} /></th>
+                    <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortHistories.length > 0 && selectedPortHistoryIds.length === filteredPortHistories.length} onChange={e => {
+                      const checked = e.target.checked;
+                      setSelectedPortHistoryIds(checked ? filteredPortHistories.map(ph => ph.id) : []);
+                      if (checked && filteredPortHistories.length > 0) {
+                        setActivePortHistoryId(filteredPortHistories[0].id);
+                      }
+                    }} /></th>
                     <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">일자</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">한국주식</th>
@@ -2174,10 +2187,28 @@ export default function App() {
                     return (
                       <tr 
                         key={ph.id} 
-                        onClick={() => setActivePortHistoryId(ph.id)}
+                        onClick={() => {
+                          setActivePortHistoryId(ph.id);
+                          if (!selectedPortHistoryIds.includes(ph.id)) {
+                            setSelectedPortHistoryIds([ph.id]);
+                          }
+                        }}
                         className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-purple-100/70 font-medium' : ''}`}
                       >
-                        <td className="py-3 px-4" onClick={e => e.stopPropagation()}><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
+                        <td className="py-3 px-4" onClick={e => e.stopPropagation()}>
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-slate-300 text-indigo-600" 
+                            checked={selectedPortHistoryIds.includes(ph.id)} 
+                            onChange={e => {
+                              const checked = e.target.checked;
+                              setSelectedPortHistoryIds(prev => checked ? [...prev, ph.id] : prev.filter(i => i !== ph.id));
+                              if (checked) {
+                                setActivePortHistoryId(ph.id);
+                              }
+                            }} 
+                          />
+                        </td>
                         <td className="py-3 px-2 text-center">
                           <div className="flex items-center justify-center gap-1">
                             {isActive ? (
