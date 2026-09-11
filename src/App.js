@@ -195,26 +195,27 @@ export default function App() {
   const chartCanvasRef = useRef(null);
   const [activeUploadType, setActiveUploadType] = useState('payment');
 
-  const availableBanks = useMemo(() => Array.from(new Set(stocks.map(s => s.bank?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
-  const availablePurposes = useMemo(() => Array.from(new Set(stocks.map(s => s.purpose?.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')), [stocks]);
+  const availableBanks = useMemo(() => Array.isArray(stocks) ? Array.from(new Set(stocks.filter(s => s && s.bank).map(s => String(s.bank).trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')) : [], [stocks]);
+  const availablePurposes = useMemo(() => Array.isArray(stocks) ? Array.from(new Set(stocks.filter(s => s && s.purpose).map(s => String(s.purpose).trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ko')) : [], [stocks]);
 
   const stockBankOptions = useMemo(() => {
     const defaultList = ['미래에셋', 'KB증권', '삼성증권'];
-    const currentList = stocks.map(s => s.bank?.trim()).filter(Boolean);
+    const currentList = Array.isArray(stocks) ? stocks.filter(s => s && s.bank).map(s => String(s.bank).trim()).filter(Boolean) : [];
     return Array.from(new Set([...defaultList, ...currentList])).sort((a, b) => a.localeCompare(b, 'ko'));
   }, [stocks]);
 
   const stockPurposeOptions = useMemo(() => {
     const defaultList = ['연금', 'IRP', 'DC', '기타'];
-    const currentList = stocks.map(s => s.purpose?.trim()).filter(Boolean);
+    const currentList = Array.isArray(stocks) ? stocks.filter(s => s && s.purpose).map(s => String(s.purpose).trim()).filter(Boolean) : [];
     return Array.from(new Set([...defaultList, ...currentList])).sort((a, b) => a.localeCompare(b, 'ko'));
   }, [stocks]);
 
-  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
+  const filteredPayments = useMemo(() => appliedSearchYear ? payments.filter(p => p && p.date && p.date.startsWith(appliedSearchYear)) : payments, [payments, appliedSearchYear]);
   
   const filteredStocks = useMemo(() => {
-    return [...stocks].sort((a, b) => {
-      const getVal = (item, fieldKey) => (item[fieldKey] || '').toString().trim();
+    if (!Array.isArray(stocks)) return [];
+    return [...stocks].filter(Boolean).sort((a, b) => {
+      const getVal = (item, fieldKey) => (item && item[fieldKey] ? String(item[fieldKey]) : '').trim();
       const val1A = getVal(a, appliedStockSortPrimary);
       const val1B = getVal(b, appliedStockSortPrimary);
       if (val1A !== val1B) return val1A.localeCompare(val1B, 'ko');
@@ -225,8 +226,9 @@ export default function App() {
   }, [stocks, appliedStockSortPrimary, appliedStockSortSecondary]);
 
   const filteredTransactions = useMemo(() => {
+    if (!Array.isArray(transactions)) return [];
     return transactions.filter(t => {
-      if (!t.date) return true;
+      if (!t || !t.date) return true;
       if (appliedTxStartDate && t.date < appliedTxStartDate) return false;
       if (appliedTxEndDate && t.date > appliedTxEndDate) return false;
       return true;
@@ -238,16 +240,21 @@ export default function App() {
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
 
-  const filteredPortfolios = useMemo(() => portfolios.filter(pf => {
-    if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
-    if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
-    if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
-    return true;
-  }), [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
+  const filteredPortfolios = useMemo(() => {
+    if (!Array.isArray(portfolios)) return [];
+    return portfolios.filter(pf => {
+      if (!pf) return false;
+      if (appliedPfBaseDate && pf.baseDate !== appliedPfBaseDate) return false;
+      if (appliedPfBankFilter && pf.bank !== appliedPfBankFilter) return false;
+      if (appliedPfPurposeFilter && pf.purpose !== appliedPfPurposeFilter) return false;
+      return true;
+    });
+  }, [portfolios, appliedPfBaseDate, appliedPfBankFilter, appliedPfPurposeFilter]);
 
   const filteredPortHistories = useMemo(() => {
+    if (!Array.isArray(portHistories)) return [];
     return portHistories.filter(ph => {
-      if (!ph.date) return true;
+      if (!ph || !ph.date) return true;
       if (appliedPortHistoryStartDate && ph.date < appliedPortHistoryStartDate) return false;
       if (appliedPortHistoryEndDate && ph.date > appliedPortHistoryEndDate) return false;
       return true;
@@ -258,14 +265,14 @@ export default function App() {
     if (!appliedTrendStartDate || !appliedTrendEndDate) return 0;
     
     const inRangeSum = payments
-      .filter(p => p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
+      .filter(p => p && p.date && p.date >= appliedTrendStartDate && p.date <= appliedTrendEndDate)
       .reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-    const priorPortfolios = portfolios.filter(p => p.baseDate && p.baseDate < appliedTrendStartDate);
+    const priorPortfolios = portfolios.filter(p => p && p.baseDate && p.baseDate < appliedTrendStartDate);
     if (priorPortfolios.length > 0) {
       const dates = Array.from(new Set(priorPortfolios.map(p => p.baseDate))).sort((a, b) => b.localeCompare(a));
       const nearestPfDate = dates[0];
-      const itemsForNearestDate = portfolios.filter(p => p.baseDate === nearestPfDate);
+      const itemsForNearestDate = portfolios.filter(p => p && p.baseDate === nearestPfDate);
       const pfTotalAmount = itemsForNearestDate.reduce((sum, p) => {
         const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
         const mult = isUSD ? exchangeRate : 1;
@@ -274,7 +281,7 @@ export default function App() {
       return inRangeSum + pfTotalAmount;
     }
 
-    const priorTrends = trendRows.filter(t => t.date && t.date < appliedTrendStartDate);
+    const priorTrends = trendRows.filter(t => t && t.date && t.date < appliedTrendStartDate);
     if (priorTrends.length > 0) {
       const sortedPriorTrends = [...priorTrends].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       const nearestTrendAmount = Number(sortedPriorTrends[0].amount || 0);
@@ -293,14 +300,14 @@ export default function App() {
     const combinedMap = new Map();
 
     trendRows.forEach(tr => {
-      if (tr.date) {
+      if (tr && tr.date) {
         combinedMap.set(tr.date, { id: tr.id, date: tr.date, amount: Number(tr.amount || 0) });
       }
     });
 
     const pfDateGroups = {};
     portfolios.forEach(pf => {
-      if (pf.baseDate) {
+      if (pf && pf.baseDate) {
         if (!pfDateGroups[pf.baseDate]) pfDateGroups[pf.baseDate] = 0;
         const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
         const mult = isUSD ? exchangeRate : 1;
@@ -606,29 +613,29 @@ export default function App() {
     d.setDate(d.getDate() - 1);
     const prevDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-    const prevDayPortfolios = portfolios.filter(p => p.baseDate === prevDateStr);
+    const prevDayPortfolios = portfolios.filter(p => p && p.baseDate === prevDateStr);
     const holdingMap = new Map();
 
     prevDayPortfolios.forEach(p => {
-      const key = `${p.bank}|${p.purpose}|${p.name}|${p.code}|${p.currency || 'KRW'}`;
+      const key = `${p.bank || ''}|${p.purpose || ''}|${p.name || ''}|${p.code || ''}|${p.currency || 'KRW'}`;
       holdingMap.set(key, {
         qty: Number(p.qty || 0),
         avgPrice: Number(p.avgPrice || 0),
         currentPrice: Number(p.currentPrice || 0),
-        bank: p.bank,
-        purpose: p.purpose,
-        name: p.name,
-        code: p.code,
+        bank: p.bank || '',
+        purpose: p.purpose || '',
+        name: p.name || '',
+        code: p.code || '',
         currency: p.currency || 'KRW',
         sellProfitLoss: Number(p.sellProfitLoss || 0)
       });
     });
 
-    const todayTxs = transactions.filter(t => (t.date || '') === baseDate);
+    const todayTxs = transactions.filter(t => t && (t.date || '') === baseDate);
     const todayTxMap = new Map();
 
     todayTxs.forEach(t => {
-      const key = `${t.bank}|${t.purpose}|${t.name}|${t.code}|${t.currency || 'KRW'}`;
+      const key = `${t.bank || ''}|${t.purpose || ''}|${t.name || ''}|${t.code || ''}|${t.currency || 'KRW'}`;
       if (!todayTxMap.has(key)) {
         todayTxMap.set(key, { buyQty: 0, sellQty: 0, buyAmount: 0, sellAmount: 0 });
       }
@@ -678,7 +685,7 @@ export default function App() {
       if (externalPriceMap.has(cleanCode) && externalPriceMap.get(cleanCode) > 0) {
         currentPrice = externalPriceMap.get(cleanCode);
       } else {
-        const existingPf = portfolios.find(p => !p.isManual && p.bank === bank && p.purpose === purpose && p.code === code && p.baseDate === baseDate);
+        const existingPf = portfolios.find(p => p && !p.isManual && (p.bank || '') === bank && (p.purpose || '') === purpose && (p.code || '') === code && p.baseDate === baseDate);
         if (existingPf && existingPf.currentPrice > 0) {
           currentPrice = existingPf.currentPrice;
         } else if (prevItem.currentPrice > 0) {
@@ -719,10 +726,11 @@ export default function App() {
       });
     }
 
-    const prevManualItems = portfolios.filter(p => p.isManual && p.baseDate === prevDateStr);
+    const prevManualItems = portfolios.filter(p => p && p.isManual && p.baseDate === prevDateStr);
 
     if (prevManualItems.length > 0) {
       prevManualItems.forEach(manual => {
+        if (!manual) return;
         const currentAmount = Number(manual.currentAmount || 0);
         const purchaseAmount = Number(manual.purchaseAmount || 0);
         const evalProfitLoss = currentAmount - purchaseAmount;
@@ -739,12 +747,12 @@ export default function App() {
       });
 
       setPortfolios(prev => [
-        ...prev.filter(p => p.baseDate !== baseDate),
+        ...(Array.isArray(prev) ? prev.filter(p => p && p.baseDate !== baseDate) : []),
         ...newPfList
       ]);
     } else {
       setPortfolios(prev => [
-        ...prev.filter(p => !(p.baseDate === baseDate && !p.isManual)),
+        ...(Array.isArray(prev) ? prev.filter(p => p && !(p.baseDate === baseDate && !p.isManual)) : []),
         ...newPfList
       ]);
     }
@@ -768,7 +776,7 @@ export default function App() {
 
     const newHistoryMap = new Map();
     portHistories.forEach(ph => {
-      if (ph.date) newHistoryMap.set(ph.date, ph);
+      if (ph && ph.date) newHistoryMap.set(ph.date, ph);
     });
 
     while (currDateObj <= finalDateObj) {
@@ -788,9 +796,10 @@ export default function App() {
         금: 0
       };
 
-      const pfItemsForDate = portfolios.filter(p => p.baseDate === targetDateStr);
+      const pfItemsForDate = portfolios.filter(p => p && p.baseDate === targetDateStr);
 
       pfItemsForDate.forEach(pf => {
+        if (!pf) return;
         const pfBank = (pf.bank || '').trim();
         const pfPurpose = (pf.purpose || '').trim();
         const pfCode = (pf.code || '').trim();
@@ -800,7 +809,8 @@ export default function App() {
         const multiplier = isUSD ? exchangeRate : 1;
         const pfCurrentAmountKRW = Number(pf.currentAmount || 0) * multiplier;
 
-        const matchingStocks = stocks.filter(s => {
+        const matchingStocks = Array.isArray(stocks) ? stocks.filter(s => {
+          if (!s) return false;
           const sBank = (s.bank || '').trim();
           const sPurpose = (s.purpose || '').trim();
           const sCode = (s.code || '').trim();
@@ -812,9 +822,10 @@ export default function App() {
           } else {
             return sName === pfName;
           }
-        });
+        }) : [];
 
         matchingStocks.forEach(stk => {
+          if (!stk) return;
           const categoryName = (stk.category || '').trim();
           const ratioVal = Number(stk.ratio || 0);
           const addedVal = pfCurrentAmountKRW * (ratioVal > 1 ? ratioVal / 100 : ratioVal);
@@ -860,10 +871,12 @@ export default function App() {
     const excelRows = [];
 
     filteredPortHistories.forEach(ph => {
+      if (!ph) return;
       const targetDateStr = ph.date;
-      const pfItemsForDate = portfolios.filter(p => p.baseDate === targetDateStr);
+      const pfItemsForDate = portfolios.filter(p => p && p.baseDate === targetDateStr);
 
       pfItemsForDate.forEach(pf => {
+        if (!pf) return;
         const pfBank = (pf.bank || '').trim();
         const pfPurpose = (pf.purpose || '').trim();
         const pfCode = (pf.code || '').trim();
@@ -873,7 +886,8 @@ export default function App() {
         const multiplier = isUSD ? exchangeRate : 1;
         const pfCurrentAmountKRW = Number(pf.currentAmount || 0) * multiplier;
 
-        const matchingStocks = stocks.filter(s => {
+        const matchingStocks = Array.isArray(stocks) ? stocks.filter(s => {
+          if (!s) return false;
           const sBank = (s.bank || '').trim();
           const sPurpose = (s.purpose || '').trim();
           const sCode = (s.code || '').trim();
@@ -885,10 +899,11 @@ export default function App() {
           } else {
             return sName === pfName;
           }
-        });
+        }) : [];
 
         if (matchingStocks.length > 0) {
           matchingStocks.forEach(stk => {
+            if (!stk) return;
             const ratioVal = Number(stk.ratio || 0);
             const ratioDecimal = ratioVal > 1 ? ratioVal / 100 : ratioVal;
             const computedAmount = pfCurrentAmountKRW * ratioDecimal;
@@ -968,7 +983,7 @@ export default function App() {
       sellProfitLoss: 0,
       profitRate: 0,
       isManual: true
-    }, ...prev]);
+    }, ...(Array.isArray(prev) ? prev : [])]);
   };
 
   const handleAddRow = () => {
@@ -978,7 +993,7 @@ export default function App() {
       bank: '',
       purpose: '연금',
       amount: 0,
-    }, ...prev]);
+    }, ...(Array.isArray(prev) ? prev : [])]);
   };
 
   const handleAddStockRow = () => {
@@ -992,7 +1007,7 @@ export default function App() {
       category: '',
       ratio: 0,
       currency: 'KRW',
-    }, ...prev]);
+    }, ...(Array.isArray(prev) ? prev : [])]);
     setActiveStockId(newId);
   };
 
@@ -1011,49 +1026,49 @@ export default function App() {
       price: 0,
       buyQty: 0,
       sellQty: 0,
-    }, ...prev]);
+    }, ...(Array.isArray(prev) ? prev : [])]);
     setActiveTransactionId(newId);
   };
 
   const handleDeleteRows = () => {
     if (selectedIds.length === 0) return;
     setDeletedIds(prev => [...prev, ...selectedIds.filter(id => !String(id).startsWith('temp_') && !String(id).startsWith('excel_'))]);
-    setPayments(prev => prev.filter(p => !selectedIds.includes(p.id)));
+    setPayments(prev => Array.isArray(prev) ? prev.filter(p => p && !selectedIds.includes(p.id)) : []);
     setSelectedIds([]);
   };
 
   const handleDeleteStockRows = () => {
     if (selectedStockIds.length === 0) return;
     setDeletedStockIds(prev => [...prev, ...selectedStockIds.filter(id => !String(id).startsWith('temp_stock_') && !String(id).startsWith('excel_stock_'))]);
-    setStocks(prev => prev.filter(s => !selectedStockIds.includes(s.id)));
+    setStocks(prev => Array.isArray(prev) ? prev.filter(s => s && !selectedStockIds.includes(s.id)) : []);
     setSelectedStockIds([]);
   };
 
   const handleDeleteTransactionRows = () => {
     if (selectedTransactionIds.length === 0) return;
     setDeletedTransactionIds(prev => [...prev, ...selectedTransactionIds.filter(id => !String(id).startsWith('temp_tx_') && !String(id).startsWith('excel_tx_'))]);
-    setTransactions(prev => prev.filter(t => !selectedTransactionIds.includes(t.id)));
+    setTransactions(prev => Array.isArray(prev) ? prev.filter(t => t && !selectedTransactionIds.includes(t.id)) : []);
     setSelectedTransactionIds([]);
   };
 
   const handleDeletePortfolioRows = () => {
     if (selectedPortfolioIds.length === 0) return;
     setDeletedPortfolioIds(prev => [...prev, ...selectedPortfolioIds.filter(id => !String(id).startsWith('temp_pf_') && !String(id).startsWith('pf_') && !String(id).startsWith('temp_manual_') && !String(id).startsWith('manual_'))]);
-    setPortfolios(prev => prev.filter(p => !selectedPortfolioIds.includes(p.id)));
+    setPortfolios(prev => Array.isArray(prev) ? prev.filter(p => p && !selectedPortfolioIds.includes(p.id)) : []);
     setSelectedPortfolioIds([]);
   };
 
   const handleDeletePortHistoryRows = () => {
     if (selectedPortHistoryIds.length === 0) return;
     setDeletedPortHistoryIds(prev => [...prev, ...selectedPortHistoryIds.filter(id => !String(id).startsWith('ph_'))]);
-    setPortHistories(prev => prev.filter(ph => !selectedPortHistoryIds.includes(ph.id)));
+    setPortHistories(prev => Array.isArray(prev) ? prev.filter(ph => ph && !selectedPortHistoryIds.includes(ph.id)) : []);
     setSelectedPortHistoryIds([]);
   };
 
   const handleDeleteTrendRows = () => {
     if (selectedTrendIds.length === 0) return;
     setDeletedTrendIds(prev => [...prev, ...selectedTrendIds.filter(id => !String(id).startsWith('temp_trend_') && !String(id).startsWith('trend_'))]);
-    setTrendRows(prev => prev.filter(t => !selectedTrendIds.includes(t.id)));
+    setTrendRows(prev => Array.isArray(prev) ? prev.filter(t => t && !selectedTrendIds.includes(t.id)) : []);
     setSelectedTrendIds([]);
   };
 
@@ -1077,6 +1092,7 @@ export default function App() {
       return;
     }
     const exportData = filteredPortfolios.map(pf => {
+      if (!pf) return null;
       const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
       const multiplier = isUSD ? exchangeRate : 1;
       const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : (pf.buyAmount || 0);
@@ -1097,7 +1113,7 @@ export default function App() {
         '이익율': Number(pf.profitRate || 0),
         '통화': pf.currency || 'KRW'
       };
-    });
+    }).filter(Boolean);
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
@@ -1137,7 +1153,7 @@ export default function App() {
             purpose: String(row[headers.indexOf('목적')] || '연금').trim(),
             amount: parseInt(String(row[headers.indexOf('금액')] || '0').replace(/[^0-9]/g, ''), 10) || 0,
           }));
-          setPayments(prev => [...excelRows, ...prev]);
+          setPayments(prev => [...excelRows, ...(Array.isArray(prev) ? prev : [])]);
         } else if (activeUploadType === 'stock') {
           const excelRows = dataRows.map((row, index) => ({
             id: 'excel_stock_' + Date.now() + '_' + index,
@@ -1149,13 +1165,13 @@ export default function App() {
             ratio: parseFloat(String(row[headers.indexOf('유형 비율')] || '0').replace(/[^0-9.]/g, '')) || 0,
             currency: String(row[headers.indexOf('통화')] || 'KRW').trim(),
           }));
-          setStocks(prev => [...excelRows, ...prev]);
+          setStocks(prev => [...excelRows, ...(Array.isArray(prev) ? prev : [])]);
         } else if (activeUploadType === 'trend') {
           const portfolioDateAmountMap = new Map();
-          const uniquePortfolioDates = Array.from(new Set(portfolios.map(p => p.baseDate).filter(Boolean)));
+          const uniquePortfolioDates = Array.from(new Set(portfolios.map(p => p && p.baseDate).filter(Boolean)));
           
           uniquePortfolioDates.forEach(dt => {
-            const itemsForDate = portfolios.filter(p => p.baseDate === dt);
+            const itemsForDate = portfolios.filter(p => p && p.baseDate === dt);
             const totalAmt = itemsForDate.reduce((sum, p) => {
               const isUSD = (p.currency || 'KRW').toUpperCase() === 'USD';
               const mult = isUSD ? exchangeRate : 1;
@@ -1208,7 +1224,7 @@ export default function App() {
             const bankVal = String(row[headers.indexOf('은행')] || '').trim();
             const purposeVal = String(row[headers.indexOf('목적')] || '연금').trim();
             const nameVal = String(row[headers.indexOf('종목명')] || '').trim();
-            const matchedStock = stocks.find(s => (s.bank || '').trim() === bankVal && (s.purpose || '').trim() === purposeVal && (s.name || '').trim() === nameVal);
+            const matchedStock = Array.isArray(stocks) ? stocks.find(s => s && (s.bank || '').trim() === bankVal && (s.purpose || '').trim() === purposeVal && (s.name || '').trim() === nameVal) : null;
             return {
               id: 'excel_tx_' + Date.now() + '_' + index,
               date: parseExcelDate(row[headers.indexOf('거래일자')]),
@@ -1222,7 +1238,7 @@ export default function App() {
               sellQty: parseFloat(String(row[headers.indexOf('매도수량')] || '0').replace(/[^0-9.]/g, '')) || 0,
             };
           });
-          setTransactions(prev => [...excelRows, ...prev]);
+          setTransactions(prev => [...excelRows, ...(Array.isArray(prev) ? prev : [])]);
         }
         setTimeout(() => setSuccessMessage(''), 3000);
       } catch (err) {
@@ -1239,8 +1255,9 @@ export default function App() {
       const batch = writeBatch(db);
       deletedIds.forEach(id => batch.delete(doc(db, "payments", id)));
       payments.forEach(p => {
+        if (!p) return;
         const ref = String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_') ? doc(collection(db, "payments")) : doc(db, "payments", p.id);
-        const data = { date: p.date, bank: p.bank, purpose: p.purpose, amount: Number(p.amount || 0) };
+        const data = { date: p.date || '', bank: p.bank || '', purpose: p.purpose || '', amount: Number(p.amount || 0) };
         if (String(p.id).startsWith('temp_') || String(p.id).startsWith('excel_')) data.createdAt = serverTimestamp();
         batch.set(ref, data, { merge: true });
       });
@@ -1262,8 +1279,9 @@ export default function App() {
       const batch = writeBatch(db);
       deletedStockIds.forEach(id => batch.delete(doc(db, "stocks", id)));
       stocks.forEach(s => {
+        if (!s) return;
         const ref = String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_') ? doc(collection(db, "stocks")) : doc(db, "stocks", s.id);
-        const data = { bank: s.bank, purpose: s.purpose, code: s.code, name: s.name, category: s.category, ratio: Number(s.ratio || 0), currency: s.currency || 'KRW' };
+        const data = { bank: s.bank || '', purpose: s.purpose || '', code: s.code || '', name: s.name || '', category: s.category || '', ratio: Number(s.ratio || 0), currency: s.currency || 'KRW' };
         if (String(s.id).startsWith('temp_stock_') || String(s.id).startsWith('excel_stock_')) data.createdAt = serverTimestamp();
         batch.set(ref, data, { merge: true });
       });
@@ -1285,8 +1303,9 @@ export default function App() {
       const batch = writeBatch(db);
       deletedTransactionIds.forEach(id => batch.delete(doc(db, "transactions", id)));
       transactions.forEach(t => {
+        if (!t) return;
         const ref = String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_') ? doc(collection(db, "transactions")) : doc(db, "transactions", t.id);
-        const data = { date: t.date, bank: t.bank, purpose: t.purpose, name: t.name, code: t.code, currency: t.currency || 'KRW', price: Number(t.price || 0), buyQty: Number(t.buyQty || 0), sellQty: Number(t.sellQty || 0) };
+        const data = { date: t.date || '', bank: t.bank || '', purpose: t.purpose || '', name: t.name || '', code: t.code || '', currency: t.currency || 'KRW', price: Number(t.price || 0), buyQty: Number(t.buyQty || 0), sellQty: Number(t.sellQty || 0) };
         if (String(t.id).startsWith('temp_tx_') || String(t.id).startsWith('excel_tx_')) data.createdAt = serverTimestamp();
         batch.set(ref, data, { merge: true });
       });
@@ -1308,23 +1327,24 @@ export default function App() {
       const batch = writeBatch(db);
       deletedPortfolioIds.forEach(id => batch.delete(doc(db, "portfolios", id)));
       portfolios.forEach(pf => {
+        if (!pf) return;
         const ref = String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') || String(pf.id).startsWith('temp_manual_') || String(pf.id).startsWith('manual_') ? doc(collection(db, "portfolios")) : doc(db, "portfolios", pf.id);
         const data = { 
-          baseDate: pf.baseDate, 
-          bank: pf.bank, 
-          purpose: pf.purpose, 
-          name: pf.name, 
+          baseDate: pf.baseDate || '', 
+          bank: pf.bank || '', 
+          purpose: pf.purpose || '', 
+          name: pf.name || '', 
           code: pf.code || '', 
           currency: pf.currency || 'KRW', 
-          avgPrice: pf.avgPrice || 0, 
-          currentPrice: pf.currentPrice || 0, 
-          qty: pf.qty || 0, 
-          todayBuyAmount: pf.todayBuyAmount || 0,
-          purchaseAmount: pf.purchaseAmount || 0, 
-          currentAmount: pf.currentAmount || 0, 
-          evalProfitLoss: pf.evalProfitLoss || 0, 
-          sellProfitLoss: pf.sellProfitLoss || 0, 
-          profitRate: pf.profitRate || 0,
+          avgPrice: Number(pf.avgPrice || 0), 
+          currentPrice: Number(pf.currentPrice || 0), 
+          qty: Number(pf.qty || 0), 
+          todayBuyAmount: Number(pf.todayBuyAmount || 0),
+          purchaseAmount: Number(pf.purchaseAmount || 0), 
+          currentAmount: Number(pf.currentAmount || 0), 
+          evalProfitLoss: Number(pf.evalProfitLoss || 0), 
+          sellProfitLoss: Number(pf.sellProfitLoss || 0), 
+          profitRate: Number(pf.profitRate || 0),
           isManual: !!pf.isManual
         };
         if (String(pf.id).startsWith('temp_pf_') || String(pf.id).startsWith('pf_') || String(pf.id).startsWith('temp_manual_') || String(pf.id).startsWith('manual_')) data.createdAt = serverTimestamp();
@@ -1348,9 +1368,10 @@ export default function App() {
       const batch = writeBatch(db);
       deletedPortHistoryIds.forEach(id => batch.delete(doc(db, "portHistories", id)));
       portHistories.forEach(ph => {
+        if (!ph) return;
         const ref = String(ph.id).startsWith('ph_') ? doc(collection(db, "portHistories")) : doc(db, "portHistories", ph.id);
         const data = {
-          date: ph.date,
+          date: ph.date || '',
           한국주식: Number(ph.한국주식 || 0),
           미국주식: Number(ph.미국주식 || 0),
           미국채: Number(ph.미국채 || 0),
@@ -1375,10 +1396,10 @@ export default function App() {
     }
   };
 
-  const handleRowChange = (id, field, val) => setPayments(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
+  const handleRowChange = (id, field, val) => setPayments(prev => Array.isArray(prev) ? prev.map(p => p && p.id === id ? { ...p, [field]: val } : p) : []);
   const handleStockRowChange = (id, field, val) => {
-    setStocks(prev => prev.map(s => {
-      if (s.id === id) {
+    setStocks(prev => Array.isArray(prev) ? prev.map(s => {
+      if (s && s.id === id) {
         const updated = { ...s, [field]: val };
         if (field === 'code') {
           const cUpper = (val || '').trim().toUpperCase();
@@ -1391,12 +1412,12 @@ export default function App() {
         return updated;
       }
       return s;
-    }));
+    }).filter(Boolean) : []);
   };
   
   const handleTransactionRowChange = (id, field, val) => {
-    setTransactions(prev => prev.map(t => {
-      if (t.id === id) {
+    setTransactions(prev => Array.isArray(prev) ? prev.map(t => {
+      if (t && t.id === id) {
         const updated = { ...t, [field]: val };
         
         if (field === 'bank' || field === 'purpose' || field === 'name') {
@@ -1405,7 +1426,8 @@ export default function App() {
           const targetName = (field === 'name' ? val : updated.name || '').trim();
 
           if (field === 'bank' || field === 'purpose') {
-            const hasMatchingName = stocks.some(s => 
+            const hasMatchingName = Array.isArray(stocks) && stocks.some(s => 
+              s &&
               (s.bank || '').trim() === targetBank && 
               (s.purpose || '').trim() === targetPurpose && 
               (s.name || '').trim() === targetName
@@ -1417,11 +1439,12 @@ export default function App() {
           }
 
           if (targetBank && targetPurpose && targetName) {
-            const matched = stocks.find(s => 
+            const matched = Array.isArray(stocks) ? stocks.find(s => 
+              s &&
               (s.bank || '').trim() === targetBank &&
               (s.purpose || '').trim() === targetPurpose &&
               (s.name || '').trim() === targetName
-            );
+            ) : null;
             if (matched) {
               updated.code = matched.code || '';
               updated.currency = matched.currency || 'KRW';
@@ -1442,12 +1465,12 @@ export default function App() {
         return updated;
       }
       return t;
-    }));
+    }).filter(Boolean) : []);
   };
 
   const handlePortfolioRowChange = (id, field, val) => {
-    setPortfolios(prev => prev.map(pf => {
-      if (pf.id === id) {
+    setPortfolios(prev => Array.isArray(prev) ? prev.map(pf => {
+      if (pf && pf.id === id) {
         const updated = { ...pf, [field]: val };
         if (pf.isManual) {
           if (field === 'bank' || field === 'purpose') {
@@ -1461,8 +1484,8 @@ export default function App() {
         } else {
           if (field === 'currentPrice') {
             const newCurrentPrice = Number(val || 0);
-            const purCost = updated.purchaseAmount || (updated.qty * (updated.avgPrice || 0));
-            updated.currentAmount = updated.qty * newCurrentPrice;
+            const purCost = updated.purchaseAmount || (Number(updated.qty || 0) * Number(updated.avgPrice || 0));
+            updated.currentAmount = Number(updated.qty || 0) * newCurrentPrice;
             updated.evalProfitLoss = updated.currentAmount - purCost;
             updated.profitRate = purCost > 0 ? updated.evalProfitLoss / purCost : 0;
           }
@@ -1470,11 +1493,11 @@ export default function App() {
         return updated;
       }
       return pf;
-    }));
+    }).filter(Boolean) : []);
   };
 
   const handleTrendRowChange = (id, field, val) => {
-    setTrendRows(prev => prev.map(tr => tr.id === id ? { ...tr, [field]: val } : tr));
+    setTrendRows(prev => Array.isArray(prev) ? prev.map(tr => tr && tr.id === id ? { ...tr, [field]: val } : tr).filter(Boolean) : []);
   };
 
   if (!isTailwindLoaded) return <div className="flex justify-center items-center h-screen text-slate-500 font-sans">준비 중...</div>;
@@ -1604,15 +1627,18 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredPayments.length > 0 ? filteredPayments.map(row => (
-                    <tr key={row.id} className={`hover:bg-slate-50 ${selectedIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedIds.includes(row.id)} onChange={() => setSelectedIds(prev => prev.includes(row.id) ? prev.filter(i => i !== row.id) : [...prev, row.id])} /></td>
-                      <td className="py-2 px-4"><input type="date" value={row.date || ''} onChange={e => handleRowChange(row.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                      <td className="py-2 px-4"><input type="text" value={row.bank || ''} onChange={e => handleRowChange(row.id, 'bank', e.target.value)} placeholder="은행 입력" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
-                      <td className="py-2 px-4"><select value={row.purpose || '연금'} onChange={e => handleRowChange(row.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
-                      <td className="py-2 px-4 text-right"><input type="text" value={row.amount === 0 ? '' : formatCurrency(row.amount)} onChange={e => handleRowChange(row.id, 'amount', parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0)} placeholder="0" className="w-full md:w-3/4 px-3 py-1.5 border rounded-md text-sm text-right font-medium bg-white" /></td>
-                    </tr>
-                  )) : <tr><td colSpan="5" className="py-16 text-center text-slate-500">조회된 납입 내역이 없습니다.</td></tr>}
+                  {filteredPayments.length > 0 ? filteredPayments.map(row => {
+                    if (!row) return null;
+                    return (
+                      <tr key={row.id} className={`hover:bg-slate-50 ${selectedIds.includes(row.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedIds.includes(row.id)} onChange={() => setSelectedIds(prev => prev.includes(row.id) ? prev.filter(i => i !== row.id) : [...prev, row.id])} /></td>
+                        <td className="py-2 px-4"><input type="date" value={row.date || ''} onChange={e => handleRowChange(row.id, 'date', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><input type="text" value={row.bank || ''} onChange={e => handleRowChange(row.id, 'bank', e.target.value)} placeholder="은행 입력" className="w-full px-3 py-1.5 border rounded-md text-sm bg-white" /></td>
+                        <td className="py-2 px-4"><select value={row.purpose || '연금'} onChange={e => handleRowChange(row.id, 'purpose', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm bg-white"><option value="연금">연금</option><option value="IRP">IRP</option><option value="DC">DC</option><option value="기타">기타</option></select></td>
+                        <td className="py-2 px-4 text-right"><input type="text" value={row.amount === 0 ? '' : formatCurrency(row.amount)} onChange={e => handleRowChange(row.id, 'amount', parseInt(e.target.value.replace(/[^0-9]/g, ''), 10) || 0)} placeholder="0" className="w-full md:w-3/4 px-3 py-1.5 border rounded-md text-sm text-right font-medium bg-white" /></td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="5" className="py-16 text-center text-slate-500">조회된 납입 내역이 없습니다.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1681,6 +1707,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredStocks.length > 0 ? filteredStocks.map((stock, idx) => {
+                    if (!stock) return null;
                     const isCustomBank = customStockBankRows[stock.id] || (stock.bank && !stockBankOptions.includes(stock.bank));
                     const isCustomPurpose = customStockPurposeRows[stock.id] || (stock.purpose && !stockPurposeOptions.includes(stock.purpose));
                     const isActive = activeStockId === stock.id;
@@ -1837,7 +1864,8 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredTransactions.length > 0 ? filteredTransactions.map((tx, idx) => {
-                    const rowNames = Array.from(new Set(stocks.filter(s => (s.bank || '').trim() === (tx.bank || '').trim() && (s.purpose || '').trim() === (tx.purpose || '').trim()).map(s => s.name?.trim()).filter(Boolean)));
+                    if (!tx) return null;
+                    const rowNames = Array.isArray(stocks) ? Array.from(new Set(stocks.filter(s => s && (s.bank || '').trim() === (tx.bank || '').trim() && (s.purpose || '').trim() === (tx.purpose || '').trim()).map(s => s.name?.trim()).filter(Boolean))) : [];
                     const isActive = activeTransactionId === tx.id;
 
                     return (
@@ -1901,7 +1929,7 @@ export default function App() {
                 <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
                 <button onClick={handleExportPortfolioExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
                 <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
-                <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                <button onClick={() => executePortfolioCalculation(pfBaseDate)} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
               </div>
 
               <div className="flex items-center gap-5 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-start xl:justify-end">
@@ -1933,17 +1961,18 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredPortfolios.length > 0 ? filteredPortfolios.map(pf => {
+                    if (!pf) return null;
                     const isUSD = (pf.currency || 'KRW').toUpperCase() === 'USD';
                     const multiplier = isUSD ? exchangeRate : 1;
                     const displayBuyAmount = pf.todayBuyAmount !== undefined ? pf.todayBuyAmount : (pf.buyAmount || 0);
 
                     if (pf.isManual) {
-                      const availableManualNames = Array.from(new Set(
+                      const availableManualNames = Array.isArray(stocks) ? Array.from(new Set(
                         stocks
                           .filter(s => s && (s.bank || '').trim() === (pf.bank || '').trim() && (s.purpose || '').trim() === (pf.purpose || '').trim() && !s.code?.trim())
                           .map(s => s.name?.trim())
                           .filter(Boolean)
-                      ));
+                      )) : [];
 
                       return (
                         <tr key={pf.id} className={`hover:bg-slate-50 ${selectedPortfolioIds.includes(pf.id) ? 'bg-indigo-50/30' : ''}`}>
@@ -1953,7 +1982,7 @@ export default function App() {
                           <td className="py-2 px-4">
                             <select 
                               value={pf.name || ''} 
-                              onChange={e => setPortfolios(prev => prev.map(p => p.id === pf.id ? { ...p, name: e.target.value } : p))} 
+                              onChange={e => setPortfolios(prev => prev.map(p => p && p.id === pf.id ? { ...p, name: e.target.value } : p).filter(Boolean))} 
                               className="w-full px-2 py-1 border rounded text-sm bg-white"
                             >
                               <option value="">종목명 선택</option>
@@ -2058,21 +2087,24 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredPortHistories.length > 0 ? filteredPortHistories.map(ph => (
-                    <tr key={ph.id} className={`hover:bg-slate-50 ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''}`}>
-                      <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
-                      <td className="py-3 px-4 text-sm font-medium text-slate-800">{ph.date}</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국주식)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국주식)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국채)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국채)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.단기채)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.현금)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.예금)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.금)}원</td>
-                      <td className="py-3 px-4 text-sm text-right text-indigo-700 font-bold bg-indigo-50/20">{formatCurrency(ph.합계금액)}원</td>
-                    </tr>
-                  )) : <tr><td colSpan="11" className="py-16 text-center text-slate-500">조회된 포트 이력 내역이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                  {filteredPortHistories.length > 0 ? filteredPortHistories.map(ph => {
+                    if (!ph) return null;
+                    return (
+                      <tr key={ph.id} className={`hover:bg-slate-50 ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''}`}>
+                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
+                        <td className="py-3 px-4 text-sm font-medium text-slate-800">{ph.date}</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국주식)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국주식)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국채)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국채)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.단기채)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.현금)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.예금)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.금)}원</td>
+                        <td className="py-3 px-4 text-sm text-right text-indigo-700 font-bold bg-indigo-50/20">{formatCurrency(ph.합계금액)}원</td>
+                      </tr>
+                    );
+                  }) : <tr><td colSpan="11" className="py-16 text-center text-slate-500">조회된 포트 이력 내역이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -2119,6 +2151,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {sortedTrendRows.length > 0 ? sortedTrendRows.map((row, index) => {
+                    if (!row) return null;
                     const nextRow = sortedTrendRows[index + 1];
                     const nextAmount = nextRow ? Number(nextRow.amount || 0) : 0;
                     const ratio = nextRow && nextAmount !== 0 ? (Number(row.amount || 0) - nextAmount) / nextAmount : 0;
