@@ -172,6 +172,12 @@ export default function App() {
   const [selectedPortHistoryIds, setSelectedPortHistoryIds] = useState([]);
   const [deletedPortHistoryIds, setDeletedPortHistoryIds] = useState([]);
   const [isSavingPortHistories, setIsSavingPortHistories] = useState(false);
+  
+  // 포트 이력 Simulation 관련 추가 상태
+  const [portHistRatios, setPortHistRatios] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
+  const [portHistTargets, setPortHistTargets] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
+  const [portHistDiffs, setPortHistDiffs] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
+  const [activePortHistoryId, setActivePortHistoryId] = useState(null);
 
   // 5. 총액 Trend 상태
   const [trendStartDate, setTrendStartDate] = useState(getYearFirstDayString());
@@ -234,7 +240,7 @@ export default function App() {
       return true;
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
-      if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
+      if ((a.bank || '') !== (b.bank || '')) return (b.bank || '').localeCompare(a.bank || '', 'ko');
       if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
@@ -1396,6 +1402,36 @@ export default function App() {
     }
   };
 
+  // 포트 이력 Simulation 실행 함수 추가
+  const handleSimulation = () => {
+    if (!activePortHistoryId) {
+      showError('Simulation을 수행할 하단 행을 선택해주세요.');
+      return;
+    }
+    const targetRow = filteredPortHistories.find(ph => ph.id === activePortHistoryId);
+    if (!targetRow) {
+      showError('선택된 행을 찾을 수 없습니다.');
+      return;
+    }
+
+    const categories = ['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'];
+    const newTargets = {};
+    const newDiffs = {};
+
+    categories.forEach(cat => {
+      const val = Number(targetRow[cat] || 0);
+      const ratio = Number(portHistRatios[cat] || 0);
+      const target = val * ratio;
+      newTargets[cat] = target;
+      newDiffs[cat] = target - val;
+    });
+
+    setPortHistTargets(newTargets);
+    setPortHistDiffs(newDiffs);
+    setSuccessMessage('Simulation이 완료되었습니다.');
+    setTimeout(() => setSuccessMessage(''), 3000);
+  };
+
   const handleRowChange = (id, field, val) => setPayments(prev => Array.isArray(prev) ? prev.map(p => p && p.id === id ? { ...p, [field]: val } : p) : []);
   const handleStockRowChange = (id, field, val) => {
     setStocks(prev => Array.isArray(prev) ? prev.map(s => {
@@ -2052,28 +2088,73 @@ export default function App() {
         {/* 4.5. 포트 이력 탭 화면 */}
         {activeTab === 'portHistory' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
-            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
-              <div className="flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
-                  <span className="text-xs text-slate-500 font-medium">시작일자</span>
-                  <input type="date" value={portHistoryStartDate} onChange={e => setPortHistoryStartDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
-                  <span className="text-slate-400">~</span>
-                  <span className="text-xs text-slate-500 font-medium">종료일자</span>
-                  <input type="date" value={portHistoryEndDate} onChange={e => setPortHistoryEndDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+            <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col gap-3">
+              {/* 첫 번째 줄: 컨트롤 버튼 및 검색 영역 */}
+              <div className="flex flex-wrap items-center gap-2.5 justify-between">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-slate-500 font-medium">시작일자</span>
+                    <input type="date" value={portHistoryStartDate} onChange={e => setPortHistoryStartDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                    <span className="text-slate-400">~</span>
+                    <span className="text-xs text-slate-500 font-medium">종료일자</span>
+                    <input type="date" value={portHistoryEndDate} onChange={e => setPortHistoryEndDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" />
+                  </div>
+                  <button onClick={() => { setAppliedPortHistoryStartDate(portHistoryStartDate); setAppliedPortHistoryEndDate(portHistoryEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                  <button onClick={() => executePortHistoryCalculation(portHistoryStartDate, portHistoryEndDate)} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
+                  <button onClick={handleSavePortHistoriesToDatabase} disabled={isSavingPortHistories} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortHistories ? '저장 중...' : '저장'}</button>
+                  <button onClick={handleDeletePortHistoryRows} disabled={selectedPortHistoryIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortHistoryIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
+                  <button onClick={handleExportPortHistoryExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
+                  <button onClick={handleSimulation} className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"><Play size={16} />Simulation</button>
                 </div>
-                <button onClick={() => { setAppliedPortHistoryStartDate(portHistoryStartDate); setAppliedPortHistoryEndDate(portHistoryEndDate); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
-                <button onClick={() => executePortHistoryCalculation(portHistoryStartDate, portHistoryEndDate)} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
-                <button onClick={handleSavePortHistoriesToDatabase} disabled={isSavingPortHistories} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortHistories ? '저장 중...' : '저장'}</button>
-                <button onClick={handleDeletePortHistoryRows} disabled={selectedPortHistoryIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortHistoryIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
-                <button onClick={handleExportPortHistoryExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
+                <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredPortHistories.length} 건</span></div>
               </div>
-              <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredPortHistories.length} 건</span></div>
+
+              {/* 두 번째 줄: 비율 필드 (한국주식, 미국주식, 미국채, 한국채, 단기채, 현금, 예금, 금) */}
+              <div className="flex flex-wrap items-center gap-2 bg-indigo-50/40 p-3 rounded-lg border border-indigo-100">
+                <span className="text-xs font-bold text-indigo-700 mr-2">비율 설정:</span>
+                {['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'].map(cat => (
+                  <div key={cat} className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-indigo-200">
+                    <span className="text-xs text-slate-600 font-medium">{cat}</span>
+                    <input 
+                      type="number" 
+                      step="any" 
+                      value={portHistRatios[cat]} 
+                      onChange={e => setPortHistRatios(prev => ({ ...prev, [cat]: parseFloat(e.target.value) || 0 }))} 
+                      className="w-16 text-xs outline-none bg-transparent text-right font-medium" 
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* 세 번째 줄: 목표금액 및 차이금액 필드 */}
+              <div className="flex flex-col gap-1.5 bg-slate-100/80 p-3 rounded-lg border border-slate-200 text-xs">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-bold text-slate-700 mr-1">목표금액:</span>
+                  {['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'].map(cat => (
+                    <div key={'target_' + cat} className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-slate-200">
+                      <span className="text-slate-500">{cat}:</span>
+                      <span className="font-bold text-indigo-600">{formatCurrency(portHistTargets[cat])}원</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-bold text-slate-700 mr-1">차이금액:</span>
+                  {['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'].map(cat => (
+                    <div key={'diff_' + cat} className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-slate-200">
+                      <span className="text-slate-500">{cat}:</span>
+                      <span className={`font-bold ${portHistDiffs[cat] >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(portHistDiffs[cat])}원</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
+
             <div className="flex-1 overflow-auto">
               <table className="w-full text-left border-collapse min-w-[1350px]">
                 <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
                     <th className="py-3 px-4 w-12 border-b"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={filteredPortHistories.length > 0 && selectedPortHistoryIds.length === filteredPortHistories.length} onChange={e => setSelectedPortHistoryIds(e.target.checked ? filteredPortHistories.map(ph => ph.id) : [])} /></th>
+                    <th className="py-3 px-2 border-b font-semibold text-slate-600 text-xs text-center w-12">선택</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm w-36">일자</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">한국주식</th>
                     <th className="py-3 px-4 border-b font-semibold text-slate-600 text-sm text-right">미국주식</th>
@@ -2087,11 +2168,25 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredPortHistories.length > 0 ? filteredPortHistories.map(ph => {
+                  {filteredPortHistories.length > 0 ? filteredPortHistories.map((ph, idx) => {
                     if (!ph) return null;
+                    const isActive = activePortHistoryId === ph.id;
                     return (
-                      <tr key={ph.id} className={`hover:bg-slate-50 ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''}`}>
-                        <td className="py-3 px-4"><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
+                      <tr 
+                        key={ph.id} 
+                        onClick={() => setActivePortHistoryId(ph.id)}
+                        className={`hover:bg-slate-50 transition-colors cursor-pointer ${selectedPortHistoryIds.includes(ph.id) ? 'bg-indigo-50/30' : ''} ${isActive ? 'bg-purple-100/70 font-medium' : ''}`}
+                      >
+                        <td className="py-3 px-4" onClick={e => e.stopPropagation()}><input type="checkbox" className="w-4 h-4 rounded border-slate-300 text-indigo-600" checked={selectedPortHistoryIds.includes(ph.id)} onChange={() => setSelectedPortHistoryIds(prev => prev.includes(ph.id) ? prev.filter(i => i !== ph.id) : [...prev, ph.id])} /></td>
+                        <td className="py-3 px-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {isActive ? (
+                              <Play size={12} className="text-purple-600 fill-purple-600 animate-pulse" />
+                            ) : (
+                              <span className="text-xs text-slate-300 font-mono">{idx + 1}</span>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3 px-4 text-sm font-medium text-slate-800">{ph.date}</td>
                         <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.한국주식)}원</td>
                         <td className="py-3 px-4 text-sm text-right text-slate-700 font-medium">{formatCurrency(ph.미국주식)}원</td>
@@ -2104,7 +2199,7 @@ export default function App() {
                         <td className="py-3 px-4 text-sm text-right text-indigo-700 font-bold bg-indigo-50/20">{formatCurrency(ph.합계금액)}원</td>
                       </tr>
                     );
-                  }) : <tr><td colSpan="11" className="py-16 text-center text-slate-500">조회된 포트 이력 내역이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
+                  }) : <tr><td colSpan="12" className="py-16 text-center text-slate-500">조회된 포트 이력 내역이 없습니다. 상단의 [계산] 버튼을 눌러보세요.</td></tr>}
                 </tbody>
               </table>
             </div>
