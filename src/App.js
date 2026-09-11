@@ -1647,15 +1647,15 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2.5">
                 <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5"><span className="text-xs text-slate-500 font-medium">기준일자</span><input type="date" value={pfBaseDate} onChange={e => setPfBaseDate(e.target.value)} className="text-sm outline-none bg-transparent font-medium" /></div>
                 
-                {/* 요청사항 반영: 환율 표시 및 입력 값을 소수점 2자리(toFixed(2))로 표시 */}
-                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5">
-                  <span className="text-xs text-slate-500 font-medium">환율(USD/KRW)</span>
+                {/* 1. 환율 입력 필드 너비 축소 (w-16, px-2 적용으로 내부 공백 제거) */}
+                <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-2 py-1.5">
+                  <span className="text-xs text-slate-500 font-medium whitespace-nowrap">환율(USD/KRW)</span>
                   <input 
                     type="number" 
                     step="any" 
                     value={Number(exchangeRate).toFixed(2)} 
                     onChange={e => setExchangeRate(parseFloat(e.target.value) || 0)} 
-                    className="w-24 text-sm outline-none bg-transparent font-medium text-right" 
+                    className="w-16 text-sm outline-none bg-transparent font-medium text-right pl-1" 
                   />
                 </div>
 
@@ -1668,7 +1668,9 @@ export default function App() {
                 <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
                 <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
               </div>
-              <div className="flex items-center gap-6 bg-white px-6 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-around xl:justify-end min-w-[500px]">
+
+              {/* 2. 요약 영역 좌측 공백 제거 (gap-5 및 width 정리) */}
+              <div className="flex items-center gap-5 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-start xl:justify-end">
                 <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">현재금액 총액</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
                 <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">평가손익 총액</span><span className={`text-base sm:text-lg font-bold whitespace-nowrap ${filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0) >= 0 ? 'text-rose-600' : 'text-blue-600'}`}>{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.evalProfitLoss || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
