@@ -222,7 +222,7 @@ export default function App() {
     }).sort((a, b) => {
       if ((a.date || '') !== (b.date || '')) return (b.date || '').localeCompare(a.date || '');
       if ((a.bank || '') !== (b.bank || '')) return (a.bank || '').localeCompare(b.bank || '', 'ko');
-      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(b.purpose || '', 'ko');
+      if ((a.purpose || '') !== (b.purpose || '')) return (a.purpose || '').localeCompare(a.purpose || '', 'ko');
       return (a.code || '').localeCompare(b.code || '', 'ko');
     });
   }, [transactions, appliedTxStartDate, appliedTxEndDate]);
@@ -870,7 +870,6 @@ export default function App() {
     }
   };
 
-  // 포트폴리오 현황 엑셀 다운로드 기능
   const handleExportPortfolioExcel = () => {
     if (filteredPortfolios.length === 0) {
       showError('엑셀로 다운로드할 조회된 포트폴리오 데이터가 없습니다.');
@@ -1641,7 +1640,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 4. 포트폴리오 현황 탭 (요청사항 반영) */}
+        {/* 4. 포트폴리오 현황 탭 */}
         {activeTab === 'portfolio' && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-center">
@@ -1653,13 +1652,12 @@ export default function App() {
                 <button onClick={handleAddPortfolioRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeletePortfolioRows} disabled={selectedPortfolioIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedPortfolioIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
                 <button onClick={handleSavePortfoliosToDatabase} disabled={isSavingPortfolios} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingPortfolios ? '저장 중...' : '저장'}</button>
-                {/* 요청사항 1: 저장 버튼 옆에 엑셀 다운로드 버튼 추가 */}
-                <button onClick={handleExportPortfolioExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀 다운로드</button>
-                {/* 요청사항 2: 엑셀 다운로드 버튼 옆으로 조회 버튼 이동 */}
+                {/* 1. 버튼명을 '엑셀'로 변경 */}
+                <button onClick={handleExportPortfolioExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
                 <button onClick={() => { setAppliedPfBaseDate(pfBaseDate); setAppliedPfBankFilter(pfBankFilter); setAppliedPfPurposeFilter(pfPurposeFilter); }} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                {/* 2. 계산 버튼이 첫 줄로 정렬됨 */}
                 <button onClick={handleCalculatePortfolio} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Calculator size={16} />계산</button>
               </div>
-              {/* 요청사항 3: 총액 필드 넓이를 전체 목적필드 조회 조건 옆까지 늘려 한 줄로 표시 */}
               <div className="flex items-center gap-6 bg-white px-6 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-around xl:justify-end min-w-[500px]">
                 <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">현재금액 총액</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(filteredPortfolios.reduce((s, c) => s + (Number(c.currentAmount || 0) * ((c.currency || 'KRW').toUpperCase() === 'USD' ? exchangeRate : 1)), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
