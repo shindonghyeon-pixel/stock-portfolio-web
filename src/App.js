@@ -1402,9 +1402,8 @@ export default function App() {
     }
   };
 
-  // 포트 이력 Simulation 실행 함수 수정 (체크박스 선택이나 행 클릭으로 지정된 activePortHistoryId를 안전하게 참조)
+  // 포트 이력 Simulation 실행 함수 수정 (목표금액 = 해당 선택한 행의 총액 * 설정된 비율)
   const handleSimulation = () => {
-    // 1. activePortHistoryId가 없으면 선택된 체크박스(selectedPortHistoryIds) 중 첫 번째 값을 대체로 사용 시도
     let targetId = activePortHistoryId;
     if (!targetId && selectedPortHistoryIds.length > 0) {
       targetId = selectedPortHistoryIds[0];
@@ -1425,10 +1424,16 @@ export default function App() {
     const newTargets = {};
     const newDiffs = {};
 
+    // 선택한 행의 총합계 금액 (합계금액)
+    const totalSum = Number(targetRow.합계금액 || 0);
+
     categories.forEach(cat => {
       const val = Number(targetRow[cat] || 0);
       const ratio = Number(portHistRatios[cat] || 0);
-      const target = val * ratio;
+      
+      // 요청 사항 로직 적용: 목표금액 = 해당 선택한 행의 총액(합계금액) * 설정된 비율
+      const target = totalSum * ratio;
+      
       newTargets[cat] = target;
       newDiffs[cat] = target - val;
     });
