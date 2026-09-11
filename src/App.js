@@ -18,7 +18,8 @@ import {
   LineChart,
   X,
   Play,
-  HelpCircle
+  HelpCircle,
+  Download
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
@@ -579,7 +580,7 @@ export default function App() {
     prevDayPortfolios.forEach(p => {
       const key = `${p.bank}|${p.purpose}|${p.name}|${p.code}|${p.currency || 'KRW'}`;
       holdingMap.set(key, {
-        qty: Number(p.qty || 0),               // 어제자 수량
+        qty: Number(p.qty || 0),             // 어제자 수량
         avgPrice: Number(p.avgPrice || 0),     // 어제자 평균단가
         currentPrice: Number(p.currentPrice || 0),
         bank: p.bank,
@@ -625,8 +626,8 @@ export default function App() {
       
       const [bank, purpose, name, code, currency] = key.split('|');
       
-      const prevQty = prevItem.qty;                 // 어제자 수량
-      const prevAvgPrice = prevItem.avgPrice;       // 어제자 평균단가
+      const prevQty = prevItem.qty;                  // 어제자 수량
+      const prevAvgPrice = prevItem.avgPrice;        // 어제자 평균단가
       const prevInventoryAmount = prevQty * prevAvgPrice; // 어제자 재고 금액 (어제자 수량 * 평균단가)
 
       const buyQty = todayItem.buyQty;              // 오늘자 매수수량
@@ -680,11 +681,11 @@ export default function App() {
         name: name,
         code: code,
         currency: currency,
-        avgPrice: avgPrice,             // 가중평균단가
-        currentPrice: currentPrice,     // 현재단가
-        qty: finalQty,                  // 수량
-        todayBuyAmount: todayBuyAmount, // 당일 거래 매수금액
-        purchaseAmount: purchaseAmount, // 보유 원가
+        avgPrice: avgPrice,                   // 가중평균단가
+        currentPrice: currentPrice,           // 현재단가
+        qty: finalQty,                        // 수량
+        todayBuyAmount: todayBuyAmount,       // 당일 거래 매수금액
+        purchaseAmount: purchaseAmount,       // 보유 원가
         currentAmount: currentAmount,
         evalProfitLoss: evalProfitLoss,
         sellProfitLoss: sellProfitLoss,
@@ -878,6 +879,25 @@ export default function App() {
       refMap[type].current.value = "";
       refMap[type].current.click();
     }
+  };
+
+  // 요청사항 1: 납입금액 현재 조회된 데이터 엑셀 export 기능 추가
+  const handleExportPaymentExcel = () => {
+    if (filteredPayments.length === 0) {
+      showError('엑셀로 다운로드할 조회된 데이터가 없습니다.');
+      return;
+    }
+    const exportData = filteredPayments.map(p => ({
+      '납입일자': p.date || '',
+      '은행': p.bank || '',
+      '목적': p.purpose || '',
+      '금액': Number(p.amount || 0)
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "납입금액목록");
+    XLSX.writeFile(workbook, `납입금액_조회내역_${getTodayString()}.xlsx`);
   };
 
   const showError = (message) => {
@@ -1321,17 +1341,24 @@ export default function App() {
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col h-[75vh]">
             <div className="p-5 border-b border-slate-200 bg-slate-50/50 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center">
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
-                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
+                {/* 요청사항 2: 조회 버튼을 엑셀 다운로드 버튼 옆으로 이동 */}
+                <div className="flex items-center gap-2">
+                  <div className="relative"><Calendar size={16} className="absolute left-3 top-3 text-slate-400" /><input type="text" placeholder="납입연도 (예: 2026)" className="pl-10 pr-4 py-2 w-44 border border-slate-300 rounded-lg text-sm bg-white" value={searchYearInput} onChange={e => setSearchYearInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && setAppliedSearchYear(searchYearInput)} /></div>
+                </div>
                 <button onClick={handleAddRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteRows} disabled={selectedIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedIds.length > 0 ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedIds.length > 0 && `(${selectedIds.length})`}</button>
                 <button onClick={() => triggerExcelUpload('payment')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
                 <button onClick={handleSaveToDatabase} disabled={isSaving} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSaving ? '저장 중...' : '저장'}</button>
+                {/* 요청사항 1: 저장 버튼 옆에 엑셀 다운로드 버튼 생성 */}
+                <button onClick={handleExportPaymentExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀 다운로드</button>
+                {/* 조회 버튼을 엑셀 다운로드 버튼 옆으로 이동 */}
+                <button onClick={() => setAppliedSearchYear(searchYearInput)} className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700"><Search size={16} />조회</button>
               </div>
-              <div className="flex items-center gap-6 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto">
-                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-lg font-bold text-slate-800">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+              {/* 요청사항 3: 총액보는 필드의 넓이를 전체 목적필드 조회 조건 옆까지 늘려서 숫자가 한줄에 나올 수 있도록 함 */}
+              <div className="flex items-center gap-6 bg-white px-6 py-2.5 rounded-lg border border-slate-200 shadow-sm w-full xl:w-auto justify-around xl:justify-end min-w-[420px]">
+                <div className="flex flex-col"><span className="text-xs text-slate-500 font-medium">납입 총액 (전체)</span><span className="text-base sm:text-lg font-bold text-slate-800 whitespace-nowrap">{formatCurrency(payments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
                 <div className="w-px h-10 bg-slate-200"></div>
-                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-lg font-bold text-indigo-700">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
+                <div className="flex flex-col"><span className="text-xs text-indigo-500 font-medium">조회 총액 (현재 화면)</span><span className="text-base sm:text-lg font-bold text-indigo-700 whitespace-nowrap">{formatCurrency(filteredPayments.reduce((s, c) => s + Number(c.amount || 0), 0))}원</span></div>
               </div>
             </div>
             <div className="flex-1 overflow-auto">
