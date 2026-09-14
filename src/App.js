@@ -486,7 +486,7 @@ export default function App() {
       setDeletedIds([]);
     } catch (error) {
       console.error("납입 데이터 불러오기 실패:", error);
-    } fontally {
+    } finally {
       setLoading(false);
     }
   };
