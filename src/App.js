@@ -595,20 +595,32 @@ export default function App() {
       }
       const codesParam = Array.from(codesSet).join(',');
 
+      // 점검용 로그 1: 백엔드로 보낼 파라미터 확인
+      console.log("1. 백엔드로 요청하는 종목코드 목록:", codesParam);
+
       if (codesParam) {
         const apiUrl = `http://localhost:8000/api/stock-prices?codes=${encodeURIComponent(codesParam)}&base_date=${baseDate}`;
         const res = await fetch(apiUrl);
+        
+        // 점검용 로그 2: 백엔드 HTTP 응답 상태 코드 확인
+        console.log("2. 백엔드 응답 상태코드:", res.status);
+
         if (res.ok) {
           const data = await res.json();
+          
+          // 점검용 로그 3: 백엔드에서 리턴된 JSON 전체 출력
+          console.log("3. 백엔드에서 받은 실제 데이터(JSON):", data);
+
           if (data && data.prices) {
             for (const [code, price] of Object.entries(data.prices)) {
-              externalPriceMap.set(code, Number(price) || 0);
+              console.log(`- 매핑 중 -> 종목코드 키: [${code}], 단가: ${price}`);
+              externalPriceMap.set(String(code).trim(), Number(price) || 0);
             }
           }
         }
       }
     } catch (err) {
-      console.error("파이썬 백엔드 주가 API 연동 실패:", err);
+      console.error("파이썬 백엔드 주가 API 연동 실패 (네트워크/서버 에러):", err);
     }
 
     const d = new Date(baseDate);
