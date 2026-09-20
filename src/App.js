@@ -180,6 +180,7 @@ export default function App() {
   const [portHistRatios, setPortHistRatios] = useState({ 한국주식: 0.275, 미국주식: 0.275, 미국채: 0.05, 한국채: 0.05, 단기채: 0.075, 현금: 0.15, 예금: 0.05, 금: 0.075 });
   const [portHistTargets, setPortHistTargets] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
   const [portHistDiffs, setPortHistDiffs] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
+  const [portHistActualRatios, setPortHistActualRatios] = useState({ 한국주식: 0, 미국주식: 0, 미국채: 0, 한국채: 0, 단기채: 0, 현금: 0, 예금: 0, 금: 0 });
   const [activePortHistoryId, setActivePortHistoryId] = useState(null);
 
   // 5. 총액 Trend 상태
@@ -423,7 +424,8 @@ export default function App() {
         ctx.fillStyle = '#64748b';
         ctx.font = '11px sans-serif';
         ctx.textAlign = 'right';
-        ctx.fillText(formatCurrency(yVal), padding - 10, yPos + 4);
+        // Y축 단위 천원으로 수정
+        ctx.fillText(formatCurrency(yVal / 1000), padding - 10, yPos + 4);
       }
     }
 
@@ -950,6 +952,60 @@ export default function App() {
     XLSX.writeFile(workbook, `포트이력_원천데이터_${getTodayString()}.xlsx`);
   };
 
+  const handleExportTransactionExcel = () => {
+    if (filteredTransactions.length === 0) {
+      showError('엑셀로 다운로드할 조회된 거래현황 데이터가 없습니다.');
+      return;
+    }
+    const exportData = filteredTransactions.map(tx => {
+      if (!tx) return null;
+      return {
+        '거래일자': tx.date || '',
+        '은행': tx.bank || '',
+        '목적': tx.purpose || '',
+        '종목명': tx.name || '',
+        '종목코드': tx.code || '',
+        '통화': tx.currency || 'KRW',
+        '단가': tx.price || 0,
+        '매수수량': tx.buyQty || 0,
+        '매도수량': tx.sellQty || 0,
+      };
+    }).filter(Boolean);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "거래현황");
+    XLSX.writeFile(workbook, `거래현황_${getTodayString()}.xlsx`);
+  };
+
+  const handleExportTrendExcel = () => {
+    if (sortedTrendRows.length === 0) {
+      showError('엑셀로 다운로드할 조회된 총액 Trend 데이터가 없습니다.');
+      return;
+    }
+    const exportData = sortedTrendRows.map((row, index) => {
+      if (!row) return null;
+      const nextRow = sortedTrendRows[index + 1];
+      const nextAmount = nextRow ? Number(nextRow.amount || 0) : 0;
+      const ratio = nextRow && nextAmount !== 0 ? (Number(row.amount || 0) - nextAmount) / nextAmount : 0;
+      const profitRate = trendTotalPayment !== 0 ? (Number(row.amount || 0) - trendTotalPayment) / trendTotalPayment : 0;
+      const profitAmount = Number(row.amount || 0) - trendTotalPayment;
+
+      return {
+        '일자': row.date || '',
+        '금액': row.amount || 0,
+        '비율(%)': (ratio * 100).toFixed(2),
+        '이익율(%)': (profitRate * 100).toFixed(2),
+        '이익금액': profitAmount,
+      };
+    }).filter(Boolean);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "총액Trend");
+    XLSX.writeFile(workbook, `총액Trend_${getTodayString()}.xlsx`);
+  };
+
   const handleCalculateTrend = () => {
     if (!appliedTrendStartDate || !appliedTrendEndDate) {
       showError('시작일자와 종료일자를 반드시 입력해주세요.');
@@ -1421,6 +1477,7 @@ export default function App() {
     const categories = ['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'];
     const newTargets = {};
     const newDiffs = {};
+    const newActualRatios = {};
 
     const totalSum = Number(targetRow.합계금액 || 0);
 
@@ -1432,10 +1489,12 @@ export default function App() {
       
       newTargets[cat] = target;
       newDiffs[cat] = target - val;
+      newActualRatios[cat] = totalSum > 0 ? (val / totalSum) * 100 : 0;
     });
 
     setPortHistTargets(newTargets);
     setPortHistDiffs(newDiffs);
+    setPortHistActualRatios(newActualRatios);
     setSuccessMessage('Simulation이 완료되었습니다.');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
@@ -1610,7 +1669,7 @@ export default function App() {
             <div className="flex items-center justify-between pb-4 border-b border-slate-200">
               <div className="flex items-center gap-2 text-indigo-600">
                 <LineChart size={24} />
-                <h3 className="text-lg font-bold text-slate-900">총액 Trend 꺾은선 그래프</h3>
+                <h3 className="text-lg font-bold text-slate-900">총액 Trend 꺾은선 그래프 (단위: 천원)</h3>
               </div>
               <button 
                 onClick={() => setIsTrendChartOpen(false)} 
@@ -1898,6 +1957,7 @@ export default function App() {
                 <button onClick={handleAddTransactionRow} className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700"><Plus size={16} />추가</button>
                 <button onClick={handleDeleteTransactionRows} disabled={selectedTransactionIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTransactionIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제 {selectedTransactionIds.length > 0 && `(${selectedTransactionIds.length})`}</button>
                 <button onClick={() => triggerExcelUpload('transaction')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleExportTransactionExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
                 <button onClick={handleSaveTransactionsToDatabase} disabled={isSavingTransactions} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"><Save size={16} />{isSavingTransactions ? '저장 중...' : '저장'}</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2.5 rounded-lg border border-slate-200 shadow-sm"><span className="text-xs text-slate-500 font-medium">조회 건수:</span><span className="text-base font-bold text-slate-800">{filteredTransactions.length} 건</span></div>
@@ -2164,6 +2224,15 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+                <div className="flex flex-wrap items-center gap-3 mt-1.5">
+                  <span className="font-bold text-slate-700 mr-1">실제비율:</span>
+                  {['한국주식', '미국주식', '미국채', '한국채', '단기채', '현금', '예금', '금'].map(cat => (
+                    <div key={'actual_' + cat} className="flex items-center gap-1 bg-white px-2 py-1 rounded border border-slate-200">
+                      <span className="text-slate-500">{cat}:</span>
+                      <span className="font-bold text-emerald-600">{(portHistActualRatios[cat] || 0).toFixed(2)}%</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -2267,6 +2336,7 @@ export default function App() {
                 <button onClick={handleDeleteTrendRows} disabled={selectedTrendIds.length === 0} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-sm font-medium ${selectedTrendIds.length > 0 ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}><Trash2 size={16} />삭제</button>
                 <button onClick={() => setIsTrendChartOpen(true)} className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700"><LineChart size={16} />그래프</button>
                 <button onClick={() => triggerExcelUpload('trend')} className="flex items-center gap-1.5 px-3.5 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50"><FileSpreadsheet size={16} className="text-green-600" />엑셀 업로드</button>
+                <button onClick={handleExportTrendExcel} className="flex items-center gap-1.5 px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"><Download size={16} />엑셀</button>
               </div>
               <div className="flex items-center gap-4 bg-white px-5 py-2 rounded-lg border border-slate-200 shadow-sm">
                 <div className="flex flex-col"><span className="text-[11px] text-slate-500 font-medium">납입 총액</span><span className="text-sm font-bold text-slate-800">{formatCurrency(trendTotalPayment)}원</span></div>
